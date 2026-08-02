@@ -1,43 +1,36 @@
-# Blackmagic HyperDeck voor Home Assistant
-
-Custom integratie (HACS) voor Blackmagic HyperDeck disk recorders (Studio, Extreme, Shuttle) via de HyperDeck Control REST API + notification websocket.
+# Blackmagic HyperDeck for Home Assistant
+Custom integration (HACS) for Blackmagic HyperDeck disk recorders (Studio, Extreme, Shuttle) via the HyperDeck Control REST API + notification websocket.
 
 ## Features
+- **Media player** entity with play / pause / stop / next / previous / seek, clip name, and a live progress bar (Home Assistant extrapolates the position in real time — no heavy polling needed).
+- **Buttons**: Play, Stop, Record, Next clip, Previous clip, Restart clip — for custom dashboard layouts.
+- **Sensors**: Timecode, Current clip, Transport mode, Clip progress (%).
+- **Switches**: Loop timeline, Loop single clip.
+- **Real-time updates** via the notification websocket, with polling (5 s) as a fallback.
 
-- **Media player** entity met play / pause / stop / next / previous / seek, clipnaam, en een live voortgangsbalk (Home Assistant extrapoleert de positie realtime — geen zware polling nodig).
-- **Buttons**: Play, Stop, Record, Next clip, Previous clip, Restart clip — voor eigen dashboard-layouts.
-- **Sensors**: Tijdcode, Huidige clip, Transportmodus, Clipvoortgang (%).
-- **Switches**: Loop tijdlijn, Loop enkele clip.
-- **Realtime updates** via de notification websocket, met polling (5 s) als fallback.
+## Requirements
+- HyperDeck with recent firmware (REST API present, December 2024 spec) and a network connection.
+- Home Assistant 2024.6 or newer.
 
-## Vereisten
+## Installation (HACS)
+1. HACS → three dots top right → *Custom repositories*.
+2. Add this repository's URL, category **Integration**.
+3. Install *Blackmagic HyperDeck* and restart Home Assistant.
+4. Settings → Devices & Services → *Add integration* → **Blackmagic HyperDeck**.
+5. Enter the HyperDeck's IP address (port 80 is default).
 
-- HyperDeck met recente firmware (REST API aanwezig, december 2024 spec) en netwerkverbinding.
-- Home Assistant 2024.6 of nieuwer.
+Manual install also works: copy `custom_components/blackmagic_hyperdeck` to your `config/custom_components/` folder.
 
-## Installatie (HACS)
+## Dashboard examples
 
-1. HACS → drie puntjes rechtsboven → *Custom repositories*.
-2. Voeg de URL van deze repository toe, categorie **Integration**.
-3. Installeer *Blackmagic HyperDeck* en herstart Home Assistant.
-4. Instellingen → Apparaten & Diensten → *Integratie toevoegen* → **Blackmagic HyperDeck**.
-5. Vul het IP-adres van de HyperDeck in (poort 80 is standaard).
-
-Handmatig kan ook: kopieer `custom_components/blackmagic_hyperdeck` naar je `config/custom_components/` map.
-
-## Dashboard-voorbeelden
-
-### Media control card (voortgangsbalk inbegrepen)
-
+### Media control card (progress bar included)
 ```yaml
 type: media-control
 entity: media_player.hyperdeck
 ```
 
-### Tile met voortgangsbalk-gevoel
-
-De sensor `sensor.hyperdeck_clip_progress` (0–100 %) werkt goed met een gauge of een custom bar card:
-
+### Tile with a progress-bar feel
+The `sensor.hyperdeck_clip_progress` sensor (0–100 %) works well with a gauge or a custom bar card:
 ```yaml
 type: gauge
 entity: sensor.hyperdeck_clip_progress
@@ -46,16 +39,14 @@ max: 100
 needle: false
 ```
 
-Of met [custom:bar-card](https://github.com/custom-cards/bar-card) via HACS voor een echte oplopende balk:
-
+Or with [custom:bar-card](https://github.com/custom-cards/bar-card) via HACS for a real filling bar:
 ```yaml
 type: custom:bar-card
 entity: sensor.hyperdeck_clip_progress
 max: 100
 ```
 
-### Transport-knoppen
-
+### Transport buttons
 ```yaml
 type: horizontal-stack
 cards:
@@ -71,20 +62,17 @@ cards:
     entity: button.hyperdeck_next_clip
 ```
 
-## Hoe de voortgangsbalk werkt
+## How the progress bar works
+The integration passes `media_position`, `media_duration`, and `media_position_updated_at` to Home Assistant. The frontend calculates the bar itself in real time — so **no** per-second polling is needed. The `clip_progress` sensor (for tiles/gauges) updates on every websocket push or poll (every 5 s at most).
 
-De integratie geeft `media_position`, `media_duration` en `media_position_updated_at` door aan Home Assistant. De frontend rekent daar zelf realtime de balk mee uit — er is dus **geen** seconde-polling nodig. De `clip_progress` sensor (voor tiles/gauges) update bij elke websocket-push of poll (max. elke 5 s).
-
-## Opmerkingen
-
-- Next/previous bestaat niet letterlijk in de REST API; de integratie springt naar het startframe van de vorige/volgende clip op de tijdlijn via seek.
-- De tijdcode-property wordt bewust **niet** via de websocket geabonneerd (kan per frame pushen); de tijdcodesensor update per poll.
-- Record start opname op de actieve media. Wees voorzichtig met de record-knop op gedeelde dashboards.
+## Notes
+- Next/previous doesn't literally exist in the REST API; the integration seeks to the start frame of the previous/next clip on the timeline instead.
+- The timecode property is deliberately **not** subscribed via the websocket (it can push per frame); the timecode sensor updates on each poll.
+- Record starts recording on the active media. Be careful with the record button on shared dashboards.
 
 ## License
-
 Released under the [MIT License](LICENSE). Copyright (c) 2026 HuisAutomatisering.
 
-Blackmagic Design, Videohub and Smart Videohub are trademarks of Blackmagic
+Blackmagic Design, HyperDeck and Blackmagic HyperDeck are trademarks of Blackmagic
 Design Pty Ltd. This project is an independent community integration and is
 not affiliated with or endorsed by Blackmagic Design.
