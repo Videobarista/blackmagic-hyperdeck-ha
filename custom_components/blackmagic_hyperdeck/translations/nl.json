@@ -1,0 +1,40 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Verbinden met HyperDeck",
+        "data": {
+          "host": "Host (IP-adres)",
+          "port": "Poort"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Kan geen verbinding maken met de HyperDeck. Controleer het IP-adres en of de REST API bereikbaar is.",
+      "unknown": "Onverwachte fout"
+    },
+    "abort": {
+      "already_configured": "Deze HyperDeck is al geconfigureerd"
+    }
+  },
+  "entity": {
+    "button": {
+      "play": { "name": "Afspelen" },
+      "stop": { "name": "Stop" },
+      "record": { "name": "Opnemen" },
+      "next_clip": { "name": "Volgende clip" },
+      "previous_clip": { "name": "Vorige clip" },
+      "restart_clip": { "name": "Clip opnieuw" }
+    },
+    "sensor": {
+      "timecode": { "name": "Tijdcode" },
+      "current_clip": { "name": "Huidige clip" },
+      "transport_mode": { "name": "Transportmodus" },
+      "clip_progress": { "name": "Clipvoortgang" }
+    },
+    "switch": {
+      "loop": { "name": "Loop tijdlijn" },
+      "single_clip": { "name": "Loop enkele clip" }
+    }
+  }
+}

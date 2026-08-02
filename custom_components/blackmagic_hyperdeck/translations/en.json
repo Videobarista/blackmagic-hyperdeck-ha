@@ -1,0 +1,40 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Connect to HyperDeck",
+        "data": {
+          "host": "Host (IP address)",
+          "port": "Port"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Cannot connect to the HyperDeck. Check the IP address and make sure the REST API is reachable.",
+      "unknown": "Unexpected error"
+    },
+    "abort": {
+      "already_configured": "This HyperDeck is already configured"
+    }
+  },
+  "entity": {
+    "button": {
+      "play": { "name": "Play" },
+      "stop": { "name": "Stop" },
+      "record": { "name": "Record" },
+      "next_clip": { "name": "Next clip" },
+      "previous_clip": { "name": "Previous clip" },
+      "restart_clip": { "name": "Restart clip" }
+    },
+    "sensor": {
+      "timecode": { "name": "Timecode" },
+      "current_clip": { "name": "Current clip" },
+      "transport_mode": { "name": "Transport mode" },
+      "clip_progress": { "name": "Clip progress" }
+    },
+    "switch": {
+      "loop": { "name": "Loop timeline" },
+      "single_clip": { "name": "Loop single clip" }
+    }
+  }
+}
