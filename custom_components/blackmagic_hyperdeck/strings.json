@@ -10,7 +10,7 @@
       }
     },
     "error": {
-      "cannot_connect": "Cannot connect to the HyperDeck. Check the IP address and make sure the REST API is reachable.",
+      "cannot_connect": "Cannot connect to the HyperDeck. Check the IP address and make sure port 9993 (Ethernet Protocol) is reachable.",
       "unknown": "Unexpected error"
     },
     "abort": {

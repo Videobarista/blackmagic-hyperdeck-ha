@@ -25,16 +25,12 @@ class HyperDeckSensorDescription(SensorEntityDescription):
 
 
 def _timecode(c: HyperDeckCoordinator) -> str | None:
-    return ((c.data or {}).get("timecode") or {}).get("display")
+    return c.transport.get("display timecode") or c.transport.get("timecode")
 
 
 def _clip_name(c: HyperDeckCoordinator) -> str | None:
     clip = c.current_clip
-    return clip.get("filePath") if clip else None
-
-
-def _transport_mode(c: HyperDeckCoordinator) -> str | None:
-    return ((c.data or {}).get("transport") or {}).get("mode")
+    return clip.get("name") if clip else None
 
 
 SENSORS: tuple[HyperDeckSensorDescription, ...] = (
@@ -54,7 +50,7 @@ SENSORS: tuple[HyperDeckSensorDescription, ...] = (
         key="transport_mode",
         translation_key="transport_mode",
         icon="mdi:video-switch",
-        value_fn=_transport_mode,
+        value_fn=lambda c: c.status,
     ),
     HyperDeckSensorDescription(
         key="clip_progress",

@@ -16,14 +16,11 @@ class HyperDeckEntity(CoordinatorEntity[HyperDeckCoordinator]):
     def __init__(self, coordinator: HyperDeckCoordinator) -> None:
         super().__init__(coordinator)
         entry = coordinator.config_entry
-        product = (coordinator.data or {}).get("product") or {}
+        device = coordinator.device
         self._attr_device_info = DeviceInfo(
             identifiers={(DOMAIN, entry.entry_id)},
             name=entry.title,
             manufacturer=MANUFACTURER,
-            model=product.get("productName") or "HyperDeck",
-            sw_version=product.get("softwareVersion"),
-            configuration_url=(
-                f"http://{coordinator.client.host}:{coordinator.client.port}"
-            ),
+            model=device.get("model") or "HyperDeck",
+            sw_version=device.get("software version"),
         )

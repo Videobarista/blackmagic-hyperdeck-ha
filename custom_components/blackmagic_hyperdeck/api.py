@@ -1,166 +1,422 @@
-"""Async client for the Blackmagic HyperDeck Control REST API.
+"""Async client for the Blackmagic HyperDeck Ethernet Protocol.
 
-Based on the "REST API for HyperDeck" developer documentation (December 2024).
-Covers HyperDeck Extreme, Shuttle and Studio models.
+Based on the "HyperDeck Ethernet Protocol" developer documentation
+(December 2024). A line-oriented text protocol on TCP port 9993, present
+on every network-capable HyperDeck (Studio, Extreme, Shuttle, and their
+older siblings). Commands are processed strictly in sequence: the deck
+will not answer a second command until it has answered the first, so this
+client serialises writes with a lock and a single in-flight response
+future.
+
+Two kinds of blocks arrive from the deck:
+  * A reply to a command we sent (response codes 100-499).
+  * An unsolicited push notification (response codes 500-599), including
+    the "connection info" banner sent automatically right after connect,
+    and further pushes once notifications are enabled with `notify`.
+
+A block is either a single line (`{code} {text}`) or, when the first line
+ends with a colon, a multi-line block of `{key}: {value}` pairs terminated
+by a blank line.
 """
 from __future__ import annotations
 
-import json
+import asyncio
 import logging
-from collections.abc import Callable
-from typing import Any
+import re
+from dataclasses import dataclass, field
+from typing import Any, Callable
 
-import aiohttp
+from .const import COMMAND_TIMEOUT, CONNECT_TIMEOUT, DEFAULT_FPS
 
 _LOGGER = logging.getLogger(__name__)
 
-API_PREFIX = "/control/api/v1"
-REQUEST_TIMEOUT = aiohttp.ClientTimeout(total=10)
+_TIMECODE_RE = re.compile(r"^(\d{2}:\d{2}:\d{2}:\d{2})\s*")
+_RATE_RE = re.compile(r"([pi])(\d+(?:\.\d+)?)$")
+
+# Every non-drop frame rate documented across HyperDeck's video-format
+# names, keyed by the digits Blackmagic uses after "p"/"i" - with or
+# without a decimal point, since different format families in Blackmagic's
+# own docs are inconsistent about this (e.g. "1080p2997" vs "2160p29.97"
+# for the same 29.97fps).
+_KNOWN_RATES: dict[str, float] = {
+    "23976": 23.976, "23.98": 23.976, "23.976": 23.976,
+    "24": 24.0,
+    "25": 25.0,
+    "2997": 29.97, "29.97": 29.97,
+    "30": 30.0,
+    "4795": 47.95, "47.95": 47.95,
+    "48": 48.0,
+    "50": 50.0,
+    "5994": 59.94, "59.94": 59.94,
+    "60": 60.0,
+    "11988": 119.88, "119.88": 119.88,
+    "120": 120.0,
+}
+
+
+def parse_video_format_fps(fmt: str | None) -> float:
+    """Best-effort frame rate from a HyperDeck video-format name.
+
+    Handles both digit-run styles seen in Blackmagic's own documentation
+    ("1080p2997" and "2160p29.97" both mean 29.97fps), the bare NTSC/PAL
+    names some models report, and interlace formats - by broadcast
+    convention the digits after "i" are the *field* rate (e.g. "1080i50"
+    is 50 fields/sec = 25 frames/sec, matching "1080p25"), and non-drop
+    timecode counts frames, so those are halved. Falls back to
+    DEFAULT_FPS for anything unrecognised rather than raising - this only
+    ever affects the timecode-to-seconds math for the progress bar and
+    sensors, never the transport commands themselves.
+    """
+    if not fmt:
+        return DEFAULT_FPS
+    upper = fmt.strip().upper()
+    if upper in ("NTSC", "NTSCP"):
+        return 29.97
+    if upper in ("PAL", "PALP"):
+        return 25.0
+    match = _RATE_RE.search(fmt.strip())
+    if not match:
+        return DEFAULT_FPS
+    scan, digits = match.group(1), match.group(2)
+    rate = _KNOWN_RATES.get(digits, DEFAULT_FPS)
+    return rate / 2 if scan == "i" else rate
 
 
 class HyperDeckError(Exception):
-    """Error talking to the HyperDeck."""
+    """Base error talking to the HyperDeck."""
 
 
 class HyperDeckConnectionError(HyperDeckError):
-    """Could not reach the HyperDeck."""
+    """Could not reach the HyperDeck, or the connection dropped."""
+
+
+class HyperDeckCommandError(HyperDeckError):
+    """The deck understood us but rejected the command (100-199 response)."""
+
+    def __init__(self, code: int, text: str) -> None:
+        super().__init__(f"{code} {text}")
+        self.code = code
+        self.text = text
+
+
+@dataclass
+class HyperDeckResponse:
+    """A single parsed block from the deck."""
+
+    code: int
+    text: str
+    params: dict[str, str] = field(default_factory=dict)
+
+    @property
+    def is_error(self) -> bool:
+        return 100 <= self.code < 200
+
+    @property
+    def is_async(self) -> bool:
+        return 500 <= self.code < 600
+
+
+def _bool(value: str | None) -> bool | None:
+    if value is None:
+        return None
+    return value.strip().strip('"').lower() == "true"
+
+
+def _build_command(name: str, params: dict[str, Any] | None = None) -> str:
+    """Build a single-line command using the protocol's combination syntax.
+
+    e.g. _build_command("play", {"loop": True, "speed": 100}) ->
+    "play: loop: true speed: 100"
+    """
+    if not params:
+        return name
+    parts = [f"{name}:"]
+    for key, value in params.items():
+        if value is None:
+            continue
+        if isinstance(value, bool):
+            value = "true" if value else "false"
+        parts.append(f"{key}: {value}")
+    return " ".join(parts)
+
+
+def parse_timecode_to_frames(timecode: str | None, nominal_fps: int) -> int | None:
+    """Parse HH:MM:SS:FF (non-drop-frame) into a frame count."""
+    if not timecode:
+        return None
+    try:
+        h, m, s, f = (int(part) for part in timecode.strip().split(":"))
+    except (ValueError, AttributeError):
+        return None
+    return ((h * 3600 + m * 60 + s) * nominal_fps) + f
+
+
+def parse_clip_line(clip_id: str, rest: str) -> dict[str, Any]:
+    """Parse one line of a `clips get: version: 2` response.
+
+    Format: "{Clip ID}: {Clip start timecode} {Duration timecode}
+    {inTimecode} {outTimecode} {name}". The name is last specifically so it
+    can contain spaces; we identify the four fixed timecodes by pattern
+    from the front and treat everything left over as the name.
+    """
+    tokens: list[str] = []
+    remaining = rest
+    for _ in range(4):
+        match = _TIMECODE_RE.match(remaining)
+        if not match:
+            break
+        tokens.append(match.group(1))
+        remaining = remaining[match.end():]
+    tokens += [None] * (4 - len(tokens))  # type: ignore[list-item]
+    start_tc, duration_tc, in_tc, out_tc = tokens
+    try:
+        clip_id_int = int(clip_id)
+    except ValueError:
+        clip_id_int = -1
+    return {
+        "clip_id": clip_id_int,
+        "start_timecode": start_tc,
+        "duration_timecode": duration_tc,
+        "in_timecode": in_tc,
+        "out_timecode": out_tc,
+        "name": remaining.strip() or None,
+    }
 
 
 class HyperDeckClient:
-    """Minimal async wrapper around the HyperDeck Control REST API."""
+    """Persistent async connection to a HyperDeck's Ethernet Protocol port."""
 
-    def __init__(self, host: str, port: int, session: aiohttp.ClientSession) -> None:
+    def __init__(
+        self,
+        host: str,
+        port: int,
+        *,
+        on_notification: Callable[[HyperDeckResponse], None] | None = None,
+        on_disconnected: Callable[[Exception | None], None] | None = None,
+    ) -> None:
         self.host = host
         self.port = port
-        self._session = session
-        self._base = f"http://{host}:{port}{API_PREFIX}"
-        self.ws_url = f"ws://{host}:{port}{API_PREFIX}/event/websocket"
+        self._on_notification = on_notification
+        self._on_disconnected = on_disconnected
 
-    # ------------------------------------------------------------------ http
-    async def _request(
-        self, method: str, path: str, payload: dict[str, Any] | None = None
-    ) -> Any:
-        url = f"{self._base}{path}"
+        self._reader: asyncio.StreamReader | None = None
+        self._writer: asyncio.StreamWriter | None = None
+        self._reader_task: asyncio.Task | None = None
+        self._send_lock = asyncio.Lock()
+        self._pending: asyncio.Future[HyperDeckResponse] | None = None
+        self._connected = asyncio.Event()
+
+    @property
+    def connected(self) -> bool:
+        return self._connected.is_set()
+
+    # ------------------------------------------------------------ connect
+    async def connect(self, timeout: float = CONNECT_TIMEOUT) -> HyperDeckResponse:
+        """Open the TCP connection and wait for the "connection info" banner."""
         try:
-            async with self._session.request(
-                method, url, json=payload, timeout=REQUEST_TIMEOUT
-            ) as resp:
-                if resp.status == 204:
-                    return None
-                if resp.status == 404:
-                    # e.g. no active disk / no timeline; treat as "no data"
-                    return None
-                if resp.status >= 400:
-                    raise HyperDeckError(
-                        f"{method} {path} failed with HTTP {resp.status}"
-                    )
-                if "json" in (resp.content_type or ""):
-                    return await resp.json()
-                text = await resp.text()
-                return json.loads(text) if text else None
-        except (aiohttp.ClientError, TimeoutError) as err:
+            self._reader, self._writer = await asyncio.wait_for(
+                asyncio.open_connection(self.host, self.port), timeout=timeout
+            )
+        except (OSError, asyncio.TimeoutError) as err:
             raise HyperDeckConnectionError(
                 f"Cannot reach HyperDeck at {self.host}:{self.port}: {err}"
             ) from err
 
-    async def _get(self, path: str) -> Any:
-        return await self._request("GET", path)
+        # The banner is itself an async block (code 500), so read it
+        # directly rather than through send_command (nothing was sent).
+        try:
+            banner = await asyncio.wait_for(self._read_block(), timeout=timeout)
+        except (OSError, asyncio.TimeoutError, HyperDeckConnectionError) as err:
+            await self._close()
+            raise HyperDeckConnectionError(
+                f"HyperDeck at {self.host}:{self.port} did not answer: {err}"
+            ) from err
 
-    # --------------------------------------------------------------- system
-    async def get_system(self) -> dict[str, Any] | None:
-        return await self._get("/system")
+        self._connected.set()
+        self._reader_task = asyncio.get_event_loop().create_task(self._reader_loop())
+        return banner
 
-    async def get_product(self) -> dict[str, Any] | None:
-        return await self._get("/system/product")
+    async def disconnect(self) -> None:
+        await self._close()
 
-    async def identify(self) -> None:
-        await self._request("PUT", "/system/identify")
+    async def _close(self) -> None:
+        self._connected.clear()
+        if self._reader_task is not None:
+            task, self._reader_task = self._reader_task, None
+            task.cancel()
+            try:
+                await task
+            except (asyncio.CancelledError, Exception):  # noqa: BLE001
+                pass
+        if self._writer is not None:
+            try:
+                self._writer.close()
+                await self._writer.wait_closed()
+            except OSError:
+                pass
+        self._writer = None
+        self._reader = None
 
-    # ------------------------------------------------------------ transport
-    async def get_transport(self) -> dict[str, Any] | None:
-        return await self._get("/transports/0")
+    # ------------------------------------------------------------ reading
+    async def _readline(self) -> str:
+        assert self._reader is not None
+        raw = await self._reader.readline()
+        if not raw:
+            raise HyperDeckConnectionError("Connection closed by HyperDeck")
+        return raw.decode("utf-8", errors="replace").rstrip("\r\n")
 
-    async def get_playback(self) -> dict[str, Any] | None:
-        return await self._get("/transports/0/playback")
+    async def _read_block(self) -> HyperDeckResponse:
+        first = await self._readline()
+        code_str, _, rest = first.partition(" ")
+        try:
+            code = int(code_str)
+        except ValueError as err:
+            raise HyperDeckConnectionError(f"Malformed response: {first!r}") from err
 
-    async def get_record(self) -> dict[str, Any] | None:
-        return await self._get("/transports/0/record")
+        params: dict[str, str] = {}
+        if rest.endswith(":"):
+            text = rest[:-1]
+            while True:
+                line = await self._readline()
+                if not line:
+                    break
+                key, sep, value = line.partition(":")
+                if sep:
+                    params[key.strip()] = value.strip()
+                else:
+                    # Line without "key: value" shape (e.g. a "clips get"
+                    # detail line "1: name ..." still matches - "1" is the
+                    # key - but guard against genuinely bare lines anyway).
+                    params[line.strip()] = ""
+        else:
+            text = rest
+        return HyperDeckResponse(code=code, text=text, params=params)
 
-    async def get_timecode(self) -> dict[str, Any] | None:
-        return await self._get("/transports/0/timecode")
+    async def _reader_loop(self) -> None:
+        try:
+            while True:
+                block = await self._read_block()
+                if block.is_async:
+                    if self._on_notification is not None:
+                        try:
+                            self._on_notification(block)
+                        except Exception:  # noqa: BLE001 - never kill the reader
+                            _LOGGER.exception("Error handling HyperDeck notification")
+                    continue
+                if self._pending is not None and not self._pending.done():
+                    if block.is_error:
+                        self._pending.set_exception(
+                            HyperDeckCommandError(block.code, block.text)
+                        )
+                    else:
+                        self._pending.set_result(block)
+                    self._pending = None
+                else:
+                    _LOGGER.debug("Unmatched HyperDeck response: %s", block)
+        except asyncio.CancelledError:
+            raise
+        except Exception as err:  # noqa: BLE001
+            if self._pending is not None and not self._pending.done():
+                self._pending.set_exception(
+                    HyperDeckConnectionError(f"Connection lost: {err}")
+                )
+            self._connected.clear()
+            if self._on_disconnected is not None:
+                self._on_disconnected(err)
 
-    async def get_clip_index(self) -> dict[str, Any] | None:
-        return await self._get("/transports/0/clipIndex")
+    # --------------------------------------------------------- send/recv
+    async def send_command(
+        self, command: str, timeout: float = COMMAND_TIMEOUT
+    ) -> HyperDeckResponse:
+        if not self.connected or self._writer is None:
+            raise HyperDeckConnectionError("Not connected to HyperDeck")
 
-    async def get_current_clip(self) -> dict[str, Any] | None:
-        return await self._get("/transports/0/clip")
+        async with self._send_lock:
+            loop = asyncio.get_event_loop()
+            self._pending = loop.create_future()
+            try:
+                self._writer.write((command + "\r\n").encode("utf-8"))
+                await self._writer.drain()
+            except OSError as err:
+                self._pending = None
+                raise HyperDeckConnectionError(f"Send failed: {err}") from err
 
-    async def play(self) -> None:
-        await self._request("POST", "/transports/0/play")
+            try:
+                return await asyncio.wait_for(self._pending, timeout=timeout)
+            except asyncio.TimeoutError as err:
+                self._pending = None
+                raise HyperDeckConnectionError(
+                    f"No response to {command.split(':')[0]!r} within {timeout}s"
+                ) from err
+
+    # ------------------------------------------------------------- system
+    async def get_device_info(self) -> dict[str, str]:
+        resp = await self.send_command("device info")
+        return resp.params
+
+    async def get_transport_info(self) -> dict[str, str]:
+        resp = await self.send_command("transport info")
+        return resp.params
+
+    async def get_slot_info(self) -> dict[str, str]:
+        resp = await self.send_command("slot info")
+        return resp.params
+
+    async def get_configuration(self) -> dict[str, str]:
+        resp = await self.send_command("configuration")
+        return resp.params
+
+    async def get_clips(self) -> list[dict[str, Any]]:
+        resp = await self.send_command("clips get: version: 2")
+        clips: list[dict[str, Any]] = []
+        for key, rest in resp.params.items():
+            if key == "clip count":
+                continue
+            clips.append(parse_clip_line(key, rest))
+        return clips
+
+    async def enable_notifications(self, **flags: bool) -> None:
+        await self.send_command(_build_command("notify", flags))
+
+    async def set_watchdog(self, period: int) -> None:
+        await self.send_command(f"watchdog: period: {period}")
+
+    # ---------------------------------------------------------- transport
+    async def play(
+        self,
+        *,
+        loop: bool | None = None,
+        single_clip: bool | None = None,
+        speed: float | None = None,
+    ) -> None:
+        params: dict[str, Any] = {}
+        if loop is not None:
+            params["loop"] = loop
+        if single_clip is not None:
+            params["single clip"] = single_clip
+        if speed is not None:
+            params["speed"] = int(speed)
+        await self.send_command(_build_command("play", params))
 
     async def stop(self) -> None:
-        await self._request("POST", "/transports/0/stop")
+        await self.send_command("stop")
 
     async def record(self, clip_name: str | None = None) -> None:
-        payload = {"clipName": clip_name} if clip_name else None
-        await self._request("POST", "/transports/0/record", payload)
+        params = {"name": clip_name} if clip_name else None
+        await self.send_command(_build_command("record", params))
 
-    async def set_playback(self, **kwargs: Any) -> None:
-        """PUT /transports/0/playback — accepts type, loop, singleClip, speed, position."""
-        await self._request("PUT", "/transports/0/playback", kwargs)
+    async def goto_clip_relative(self, count: int) -> None:
+        """Jump forward/back {count} clips; clamps at the first/last clip."""
+        sign = "+" if count >= 0 else ""
+        await self.send_command(f"goto: clip id: {sign}{count}")
 
-    async def seek_frames(self, position: int) -> None:
-        await self.set_playback(position=int(position))
+    async def goto_clip_start(self) -> None:
+        await self.send_command("goto: clip: start")
 
-    # ------------------------------------------------------------- timeline
-    async def get_timeline(self) -> dict[str, Any] | None:
-        return await self._get("/timelines/0")
+    async def goto_clip_id(self, clip_id: int) -> None:
+        """Jump to the start of a specific clip, by its (1-based) clip id."""
+        await self.send_command(f"goto: clip id: {int(clip_id)}")
 
-    async def get_clips(self) -> dict[str, Any] | None:
-        return await self._get("/clips")
-
-    # ------------------------------------------------------------ websocket
-    async def listen(
-        self,
-        properties: list[str],
-        callback: Callable[[str, Any], None],
-        on_connect: Callable[[], None] | None = None,
-    ) -> None:
-        """Connect to the notification websocket and dispatch property updates.
-
-        Runs until the connection drops or the task is cancelled.
-        """
-        async with self._session.ws_connect(self.ws_url, heartbeat=30) as ws:
-            await ws.send_json(
-                {
-                    "type": "request",
-                    "id": 1,
-                    "data": {"action": "subscribe", "properties": properties},
-                }
-            )
-            if on_connect is not None:
-                on_connect()
-            async for msg in ws:
-                if msg.type == aiohttp.WSMsgType.TEXT:
-                    try:
-                        self._dispatch(json.loads(msg.data), callback)
-                    except (ValueError, KeyError) as err:
-                        _LOGGER.debug("Ignoring malformed ws message: %s", err)
-                elif msg.type in (
-                    aiohttp.WSMsgType.CLOSED,
-                    aiohttp.WSMsgType.ERROR,
-                ):
-                    break
-
-    @staticmethod
-    def _dispatch(message: dict[str, Any], callback: Callable[[str, Any], None]) -> None:
-        data = message.get("data") or {}
-        msg_type = message.get("type")
-        if msg_type == "event" and data.get("action") == "propertyValueChanged":
-            prop = data.get("property")
-            if prop:
-                callback(prop, data.get("value"))
-        elif msg_type == "response":
-            # Subscribe responses carry initial values keyed by property.
-            for prop, value in (data.get("values") or {}).items():
-                callback(prop, value)
+    async def goto_clip_frame(self, frame: int) -> None:
+        """Seek to a frame position within the current clip."""
+        await self.send_command(f"goto: clip: {int(frame)}")

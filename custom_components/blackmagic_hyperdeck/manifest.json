@@ -1,13 +1,13 @@
 {
   "domain": "blackmagic_hyperdeck",
   "name": "Blackmagic HyperDeck",
-  "codeowners": ["@yorrick"],
+  "codeowners": ["@VideoBarista"],
   "config_flow": true,
   "dependencies": [],
-  "documentation": "https://github.com/yorrick/blackmagic-hyperdeck-ha",
+  "documentation": "https://github.com/VideoBarista/blackmagic-hyperdeck-ha",
   "integration_type": "device",
   "iot_class": "local_push",
-  "issue_tracker": "https://github.com/yorrick/blackmagic-hyperdeck-ha/issues",
+  "issue_tracker": "https://github.com/VideoBarista/blackmagic-hyperdeck-ha/issues",
   "requirements": [],
-  "version": "0.1.0"
+  "version": "0.2.0"
 }

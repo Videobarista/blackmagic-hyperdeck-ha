@@ -7,7 +7,6 @@ from typing import Any
 import voluptuous as vol
 
 from homeassistant.config_entries import ConfigFlow, ConfigFlowResult
-from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 from .api import HyperDeckClient, HyperDeckConnectionError, HyperDeckError
 from .const import CONF_HOST, CONF_PORT, DEFAULT_PORT, DOMAIN
@@ -25,7 +24,7 @@ DATA_SCHEMA = vol.Schema(
 class HyperDeckConfigFlow(ConfigFlow, domain=DOMAIN):
     """Handle the config flow."""
 
-    VERSION = 1
+    VERSION = 2  # bumped: v1 config entries pointed at the REST port (80)
 
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
@@ -37,17 +36,21 @@ class HyperDeckConfigFlow(ConfigFlow, domain=DOMAIN):
             await self.async_set_unique_id(f"{host}:{port}")
             self._abort_if_unique_id_configured()
 
-            client = HyperDeckClient(host, port, async_get_clientsession(self.hass))
+            client = HyperDeckClient(host, port)
             try:
-                product = await client.get_product() or {}
+                banner = await client.connect()
+                try:
+                    device = await client.get_device_info()
+                finally:
+                    await client.disconnect()
             except HyperDeckConnectionError:
                 errors["base"] = "cannot_connect"
             except HyperDeckError:
                 errors["base"] = "unknown"
             else:
                 title = (
-                    product.get("deviceName")
-                    or product.get("productName")
+                    device.get("name")
+                    or banner.params.get("model")
                     or f"HyperDeck ({host})"
                 )
                 return self.async_create_entry(

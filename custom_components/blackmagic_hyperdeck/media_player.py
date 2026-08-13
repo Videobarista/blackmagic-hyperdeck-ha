@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Any
 
 from homeassistant.components.media_player import (
     MediaPlayerEntity,
@@ -16,6 +17,10 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from . import HyperDeckConfigEntry
 from .coordinator import HyperDeckCoordinator
 from .entity import HyperDeckEntity
+
+# Deck transport "status" values that represent some form of active
+# playback (as opposed to fully stopped/idle or recording).
+_PLAYING_STATUSES = {"play", "forward", "rewind", "jog", "shuttle"}
 
 
 async def async_setup_entry(
@@ -49,25 +54,24 @@ class HyperDeckMediaPlayer(HyperDeckEntity, MediaPlayerEntity):
     # -------------------------------------------------------------- state
     @property
     def state(self) -> MediaPlayerState:
-        data = self.coordinator.data or {}
-        mode = (data.get("transport") or {}).get("mode")
-        if mode == "InputRecord":
-            # media_player has no recording state; expose via attributes too.
+        c = self.coordinator
+        if c.is_recording:
+            # media_player has no dedicated recording state; the "record"
+            # sensor/attribute below carries the detail.
             return MediaPlayerState.ON
-        if mode == "Output":
-            speed = self.coordinator.playback.get("speed") or 0
-            return MediaPlayerState.PLAYING if speed else MediaPlayerState.PAUSED
+        if c.status in _PLAYING_STATUSES:
+            return MediaPlayerState.PLAYING if c.speed else MediaPlayerState.PAUSED
         return MediaPlayerState.IDLE
 
     @property
-    def extra_state_attributes(self) -> dict:
+    def extra_state_attributes(self) -> dict[str, Any]:
         c = self.coordinator
         return {
             "recording": c.is_recording,
-            "transport_mode": ((c.data or {}).get("transport") or {}).get("mode"),
-            "timecode": ((c.data or {}).get("timecode") or {}).get("display"),
-            "clip_index": c.clip_index,
-            "playback_speed": c.playback.get("speed"),
+            "transport_status": c.status,
+            "timecode": c.transport.get("display timecode") or c.transport.get("timecode"),
+            "clip_id": c.current_clip_id,
+            "playback_speed": c.speed,
             "clip_progress": c.clip_progress(),
         }
 
@@ -75,26 +79,21 @@ class HyperDeckMediaPlayer(HyperDeckEntity, MediaPlayerEntity):
     @property
     def media_title(self) -> str | None:
         clip = self.coordinator.current_clip
-        if clip is not None:
-            return clip.get("filePath")
-        entry = self.coordinator.timeline_entry(self.coordinator.clip_index)
-        if entry is not None:
-            return self.coordinator.clip_name_by_unique_id(entry.get("clipUniqueId"))
-        return None
+        return clip.get("name") if clip else None
 
     @property
     def media_duration(self) -> int | None:
         frames = self.coordinator.clip_duration_frames()
         if frames is None:
             return None
-        return int(frames / self.coordinator.fps)
+        return round(frames / self.coordinator.fps)
 
     @property
     def media_position(self) -> int | None:
         frames = self.coordinator.clip_position_frames()
         if frames is None:
             return None
-        return int(frames / self.coordinator.fps)
+        return round(frames / self.coordinator.fps)
 
     @property
     def media_position_updated_at(self) -> datetime | None:
@@ -103,65 +102,69 @@ class HyperDeckMediaPlayer(HyperDeckEntity, MediaPlayerEntity):
     # -------------------------------------------------------------- source
     @property
     def source_list(self) -> list[str] | None:
-        names = []
-        for entry in self.coordinator.timeline_clips:
-            name = self.coordinator.clip_name_by_unique_id(entry.get("clipUniqueId"))
-            names.append(name or f"Clip {len(names) + 1}")
+        names = [clip.get("name") or f"Clip {clip['clip_id']}" for clip in self.coordinator.clips]
         return names or None
 
     @property
     def source(self) -> str | None:
-        entry = self.coordinator.timeline_entry(self.coordinator.clip_index)
-        if entry is None:
-            return None
-        return self.coordinator.clip_name_by_unique_id(entry.get("clipUniqueId"))
+        clip = self.coordinator.current_clip
+        return clip.get("name") if clip else None
 
     async def async_select_source(self, source: str) -> None:
-        sources = self.source_list or []
-        if source in sources:
-            await self.coordinator.async_goto_timeline_clip(sources.index(source))
+        for clip in self.coordinator.clips:
+            if (clip.get("name") or f"Clip {clip['clip_id']}") == source:
+                await self.coordinator.client.goto_clip_id(clip["clip_id"])
+                await self.coordinator.async_refresh_transport()
+                break
 
     # -------------------------------------------------------------- repeat
     @property
     def repeat(self) -> RepeatMode:
-        playback = self.coordinator.playback
-        if playback.get("singleClip"):
+        c = self.coordinator
+        if c.single_clip:
             return RepeatMode.ONE
-        if playback.get("loop"):
+        if c.loop:
             return RepeatMode.ALL
         return RepeatMode.OFF
 
     async def async_set_repeat(self, repeat: RepeatMode) -> None:
-        await self.coordinator.client.set_playback(
+        # NOTE: the Ethernet Protocol has no standalone "set loop/single
+        # clip" command - loop and single-clip are parameters of "play"
+        # itself. We pass the deck's current speed straight through
+        # (rather than defaulting to some value) so that toggling repeat
+        # while stopped doesn't unexpectedly start playback.
+        c = self.coordinator
+        await c.client.play(
             loop=repeat in (RepeatMode.ALL, RepeatMode.ONE),
-            singleClip=repeat == RepeatMode.ONE,
+            single_clip=repeat == RepeatMode.ONE,
+            speed=c.speed,
         )
-        await self.coordinator.async_request_refresh()
+        await c.async_refresh_transport()
 
     # ------------------------------------------------------------ commands
     async def async_media_play(self) -> None:
-        await self.coordinator.client.play()
-        await self.coordinator.async_request_refresh()
+        c = self.coordinator
+        await c.client.play(loop=c.loop, single_clip=c.single_clip, speed=100)
+        await c.async_refresh_transport()
 
     async def async_media_pause(self) -> None:
-        await self.coordinator.client.set_playback(speed=0)
-        await self.coordinator.async_request_refresh()
+        c = self.coordinator
+        await c.client.play(loop=c.loop, single_clip=c.single_clip, speed=0)
+        await c.async_refresh_transport()
 
     async def async_media_stop(self) -> None:
         await self.coordinator.client.stop()
-        await self.coordinator.async_request_refresh()
+        await self.coordinator.async_refresh_transport()
 
     async def async_media_next_track(self) -> None:
         await self.coordinator.async_next_clip()
+        await self.coordinator.async_refresh_transport()
 
     async def async_media_previous_track(self) -> None:
         await self.coordinator.async_previous_clip()
+        await self.coordinator.async_refresh_transport()
 
     async def async_media_seek(self, position: float) -> None:
-        c = self.coordinator
-        offset = 0
-        entry = c.timeline_entry(c.clip_index)
-        if entry is not None:
-            offset = c._frames(entry.get("timelineIn"))  # noqa: SLF001
-        await c.client.seek_frames(offset + int(position * c.fps))
-        await c.async_request_refresh()
+        frame = round(position * self.coordinator.fps)
+        await self.coordinator.client.goto_clip_frame(frame)
+        await self.coordinator.async_refresh_transport()

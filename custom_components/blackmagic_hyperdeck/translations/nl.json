@@ -10,7 +10,7 @@
       }
     },
     "error": {
-      "cannot_connect": "Kan geen verbinding maken met de HyperDeck. Controleer het IP-adres en of de REST API bereikbaar is.",
+      "cannot_connect": "Kan geen verbinding maken met de HyperDeck. Controleer het IP-adres en of poort 9993 (Ethernet-protocol) bereikbaar is.",
       "unknown": "Onverwachte fout"
     },
     "abort": {

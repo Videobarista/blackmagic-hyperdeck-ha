@@ -23,7 +23,7 @@ BUTTONS: tuple[HyperDeckButtonDescription, ...] = (
         key="play",
         translation_key="play",
         icon="mdi:play",
-        press_fn=lambda c: c.client.play(),
+        press_fn=lambda c: c.client.play(loop=c.loop, single_clip=c.single_clip, speed=100),
     ),
     HyperDeckButtonDescription(
         key="stop",
@@ -83,4 +83,4 @@ class HyperDeckButton(HyperDeckEntity, ButtonEntity):
 
     async def async_press(self) -> None:
         await self.entity_description.press_fn(self.coordinator)
-        await self.coordinator.async_request_refresh()
+        await self.coordinator.async_refresh_transport()

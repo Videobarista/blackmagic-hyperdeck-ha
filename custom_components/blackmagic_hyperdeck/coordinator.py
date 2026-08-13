@@ -1,220 +1,321 @@
 """Coordinator for the Blackmagic HyperDeck integration.
 
-Uses the notification websocket for realtime push updates, with REST polling
-as fallback (and for values not worth subscribing to, like timecode).
+Unlike the REST-based v0.1.0, there is a single persistent TCP connection
+per deck (the Ethernet Protocol is stateful and processes commands
+strictly in sequence). This coordinator owns that connection's entire
+lifecycle - connect, enable notifications, a light poll loop for values
+that don't get pushed (mainly timecode), and reconnect-with-backoff if the
+socket drops - in one background task, and feeds updates to entities via
+the normal DataUpdateCoordinator listener mechanism. HA's own polling
+scheduler is not used (`update_interval` is left unset); every update is
+pushed in explicitly via `async_set_updated_data`.
 """
 from __future__ import annotations
 
 import asyncio
 import logging
-from datetime import timedelta
 from typing import Any
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
+from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 from homeassistant.util import dt as dt_util
 
-from .api import HyperDeckClient, HyperDeckConnectionError, HyperDeckError
-from .const import CLIPS_REFRESH_EVERY, DEFAULT_SCAN_INTERVAL, DOMAIN, WS_PROPERTIES
+from .api import (
+    HyperDeckClient,
+    HyperDeckConnectionError,
+    HyperDeckError,
+    HyperDeckResponse,
+    parse_timecode_to_frames,
+    parse_video_format_fps,
+)
+from .const import (
+    CLIPS_REFRESH_EVERY,
+    DEFAULT_FPS,
+    DOMAIN,
+    NOMINAL_FPS,
+    POLL_INTERVAL,
+    RECONNECT_DELAY,
+    WATCHDOG_PERIOD,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
-# Map websocket property -> key in coordinator data
-_WS_KEY_MAP = {
-    "/transports/0": "transport",
-    "/transports/0/playback": "playback",
-    "/transports/0/record": "record",
-    "/transports/0/clipIndex": "clip_index",
-    "/timelines/0": "timeline",
-}
+
+def _bool(value: str | None) -> bool:
+    return (value or "").strip().lower() == "true"
 
 
 class HyperDeckCoordinator(DataUpdateCoordinator[dict[str, Any]]):
-    """Holds HyperDeck state and pushes websocket updates to entities."""
+    """Owns the connection and holds the latest known HyperDeck state."""
 
     config_entry: ConfigEntry
 
-    def __init__(
-        self, hass: HomeAssistant, entry: ConfigEntry, client: HyperDeckClient
-    ) -> None:
-        super().__init__(
-            hass,
-            _LOGGER,
-            name=f"{DOMAIN}_{client.host}",
-            config_entry=entry,
-            update_interval=timedelta(seconds=DEFAULT_SCAN_INTERVAL),
+    def __init__(self, hass: HomeAssistant, entry: ConfigEntry, host: str, port: int) -> None:
+        super().__init__(hass, _LOGGER, name=f"{DOMAIN}_{host}", config_entry=entry)
+        self.client = HyperDeckClient(
+            host,
+            port,
+            on_notification=self._on_notification,
+            on_disconnected=self._on_disconnected,
         )
-        self.client = client
         self.position_updated_at = dt_util.utcnow()
-        self._ws_task: asyncio.Task | None = None
+        self._run_task: asyncio.Task | None = None
         self._poll_count = 0
 
-    # ----------------------------------------------------------------- poll
-    async def _async_update_data(self) -> dict[str, Any]:
-        data: dict[str, Any] = dict(self.data or {})
-        try:
-            (
-                transport,
-                playback,
-                record,
-                timecode,
-                clip_index,
-                clip,
-                timeline,
-            ) = await asyncio.gather(
-                self.client.get_transport(),
-                self.client.get_playback(),
-                self.client.get_record(),
-                self.client.get_timecode(),
-                self.client.get_clip_index(),
-                self.client.get_current_clip(),
-                self.client.get_timeline(),
+    # ------------------------------------------------------------- start
+    def start(self) -> None:
+        if self._run_task is None or self._run_task.done():
+            self._run_task = self.config_entry.async_create_background_task(
+                self.hass, self._run(), name=f"{DOMAIN}_connection_{self.client.host}"
             )
-            if data.get("system") is None:
-                data["system"] = await self.client.get_system()
-            if data.get("product") is None:
-                data["product"] = await self.client.get_product()
-            if data.get("clips") is None or self._poll_count % CLIPS_REFRESH_EVERY == 0:
-                data["clips"] = await self.client.get_clips()
-        except HyperDeckConnectionError as err:
-            raise UpdateFailed(str(err)) from err
-        except HyperDeckError as err:
-            raise UpdateFailed(f"HyperDeck API error: {err}") from err
 
-        self._poll_count += 1
-        data.update(
+    async def stop(self) -> None:
+        if self._run_task is not None:
+            self._run_task.cancel()
+            self._run_task = None
+        await self.client.disconnect()
+
+    async def async_setup(self) -> None:
+        """Connect and fetch once synchronously, then start the background loop.
+
+        Deliberately not named/wired as `async_config_entry_first_refresh`
+        (the DataUpdateCoordinator base class method) since this doesn't
+        go through `_async_update_data` - raises the api.py exceptions
+        directly so `__init__.py` can turn them into `ConfigEntryNotReady`.
+        """
+        await self._connect_and_sync()
+        self.start()
+
+    # --------------------------------------------------------- main loop
+    async def _run(self) -> None:
+        first = True
+        while True:
+            try:
+                if not first:
+                    await self._connect_and_sync()
+                first = False
+                await self._poll_loop()
+            except asyncio.CancelledError:
+                raise
+            except HyperDeckConnectionError as err:
+                _LOGGER.debug("HyperDeck connection lost/unavailable: %s", err)
+            except Exception:  # noqa: BLE001 - keep the loop alive regardless
+                _LOGGER.exception("Unexpected error in HyperDeck connection loop")
+            self.last_update_success = False
+            self.async_update_listeners()
+            await self.client.disconnect()
+            await asyncio.sleep(RECONNECT_DELAY)
+
+    async def _poll_loop(self) -> None:
+        while self.client.connected:
+            await asyncio.sleep(POLL_INTERVAL)
+            transport = await self.client.get_transport_info()
+            self._merge({"transport": transport})
+            self.position_updated_at = dt_util.utcnow()
+            self._poll_count += 1
+            if self._poll_count % CLIPS_REFRESH_EVERY == 0:
+                await self._refresh_clips()
+
+    # ------------------------------------------------------ connect/sync
+    async def _connect_and_sync(self) -> None:
+        await self.client.connect()
+        try:
+            await self.client.enable_notifications(
+                transport=True, slot=True, configuration=True, clips=True, disk=True
+            )
+            await self.client.set_watchdog(WATCHDOG_PERIOD)
+            device = await self.client.get_device_info()
+            transport = await self.client.get_transport_info()
+            slot = await self.client.get_slot_info()
+            configuration = await self.client.get_configuration()
+            clips = await self.client.get_clips()
+        except HyperDeckError:
+            await self.client.disconnect()
+            raise
+        self.async_set_updated_data(
             {
+                "device": device,
                 "transport": transport,
-                "playback": playback,
-                "record": record,
-                "timecode": timecode,
-                "clip_index": clip_index,
-                "clip": clip,
-                "timeline": timeline,
+                "slot": slot,
+                "configuration": configuration,
+                "clips": clips,
             }
         )
         self.position_updated_at = dt_util.utcnow()
-        return data
+        self._poll_count = 0
 
-    # ------------------------------------------------------------ websocket
-    def start_websocket(self) -> None:
-        if self._ws_task is None or self._ws_task.done():
-            self._ws_task = self.config_entry.async_create_background_task(
-                self.hass, self._ws_loop(), name=f"{DOMAIN}_ws_{self.client.host}"
-            )
+    async def async_refresh_transport(self) -> None:
+        """Re-fetch transport info right away after we issue a command.
 
-    async def stop_websocket(self) -> None:
-        if self._ws_task is not None:
-            self._ws_task.cancel()
-            self._ws_task = None
-
-    async def _ws_loop(self) -> None:
-        while True:
-            try:
-                await self.client.listen(WS_PROPERTIES, self._on_ws_property)
-                _LOGGER.debug("HyperDeck websocket closed, reconnecting")
-            except asyncio.CancelledError:
-                raise
-            except Exception as err:  # noqa: BLE001 - keep the loop alive
-                _LOGGER.debug("HyperDeck websocket error: %s", err)
-            await asyncio.sleep(10)
-
-    def _on_ws_property(self, prop: str, value: Any) -> None:
-        """Handle a pushed property change (runs in the event loop)."""
-        key = _WS_KEY_MAP.get(prop)
-        if key is None:
-            if prop == "/media/active":
-                # Disk changed: clip list is stale, refetch on next poll.
-                new = dict(self.data or {})
-                new["clips"] = None
-                self.async_set_updated_data(new)
+        Entities call this instead of the base class's
+        `async_request_refresh()` - that goes through `_async_update_data`,
+        which this coordinator never overrides, since state normally
+        arrives via the connection loop's own poll/push handling instead.
+        A push notification confirming our own command usually arrives
+        anyway; this just avoids waiting up to POLL_INTERVAL for it.
+        """
+        if not self.client.connected:
             return
+        try:
+            transport = await self.client.get_transport_info()
+        except HyperDeckError:
+            return
+        self._merge({"transport": transport})
+        self.position_updated_at = dt_util.utcnow()
+
+    async def _refresh_clips(self) -> None:
+        try:
+            clips = await self.client.get_clips()
+        except HyperDeckError:
+            return
+        self._merge({"clips": clips})
+
+    def _merge(self, patch: dict[str, Any]) -> None:
         new = dict(self.data or {})
-        new[key] = value
-        if key == "playback":
-            self.position_updated_at = dt_util.utcnow()
+        new.update(patch)
         self.async_set_updated_data(new)
+
+    # ------------------------------------------------------- notifications
+    def _on_notification(self, block: HyperDeckResponse) -> None:
+        """Handle an unsolicited push from the deck (runs on the event loop)."""
+        if block.text == "transport info":
+            self._merge({"transport": block.params})
+            self.position_updated_at = dt_util.utcnow()
+        elif block.text == "slot info":
+            self._merge({"slot": block.params})
+        elif block.text == "configuration":
+            # Not exposed as its own entity, but "timecode output" here is
+            # what clip_position_frames() needs to interpret "timecode"
+            # unambiguously - see that method's docstring.
+            self._merge({"configuration": block.params})
+        elif block.text in ("clips info", "disk list"):
+            # A partial "add" or full "snapshot" update; simplest and most
+            # robust is to just refetch the authoritative list.
+            self.hass.async_create_task(self._refresh_clips())
+        # "remote info" / "connection info" pushes aren't currently
+        # surfaced anywhere; ignored deliberately.
+
+    def _on_disconnected(self, err: Exception | None) -> None:
+        _LOGGER.debug("HyperDeck %s disconnected: %s", self.client.host, err)
+        self.last_update_success = False
+        self.async_update_listeners()
 
     # ------------------------------------------------------------- helpers
     @property
-    def playback(self) -> dict[str, Any]:
-        return (self.data or {}).get("playback") or {}
+    def transport(self) -> dict[str, str]:
+        return (self.data or {}).get("transport") or {}
+
+    @property
+    def device(self) -> dict[str, str]:
+        return (self.data or {}).get("device") or {}
+
+    @property
+    def status(self) -> str | None:
+        return self.transport.get("status")
 
     @property
     def is_recording(self) -> bool:
-        record = (self.data or {}).get("record") or {}
-        return bool(record.get("recording"))
+        return self.status == "record"
 
     @property
-    def timeline_clips(self) -> list[dict[str, Any]]:
-        timeline = (self.data or {}).get("timeline") or {}
-        return timeline.get("clips") or []
+    def loop(self) -> bool:
+        return _bool(self.transport.get("loop"))
 
     @property
-    def clip_index(self) -> int | None:
-        ci = (self.data or {}).get("clip_index") or {}
-        idx = ci.get("clipIndex")
-        return int(idx) if idx is not None else None
+    def single_clip(self) -> bool:
+        return _bool(self.transport.get("single clip"))
 
     @property
-    def current_clip(self) -> dict[str, Any] | None:
-        clip_wrapper = (self.data or {}).get("clip") or {}
-        return clip_wrapper.get("clip")
+    def speed(self) -> float:
+        try:
+            return float(self.transport.get("speed") or 0)
+        except ValueError:
+            return 0.0
 
     @property
     def fps(self) -> float:
-        """Frame rate of the current clip, falling back to the system format."""
-        for source in (self.current_clip, (self.data or {}).get("system")):
-            if not source:
-                continue
-            rate = (source.get("videoFormat") or {}).get("frameRate")
-            if rate:
-                try:
-                    return float(rate)
-                except (TypeError, ValueError):
-                    continue
-        return 25.0
+        return parse_video_format_fps(self.transport.get("video format"))
 
-    def clip_name_by_unique_id(self, unique_id: Any) -> str | None:
-        clips = ((self.data or {}).get("clips") or {}).get("clips") or []
-        for clip in clips:
-            if clip.get("clipUniqueId") == unique_id:
-                return clip.get("filePath")
+    @property
+    def nominal_fps(self) -> int:
+        fps = self.fps
+        return NOMINAL_FPS.get(fps, round(fps) or int(DEFAULT_FPS))
+
+    @property
+    def current_clip_id(self) -> int | None:
+        raw = self.transport.get("clip id")
+        if not raw or raw == "none":
+            return None
+        try:
+            return int(raw)
+        except ValueError:
+            return None
+
+    def clip_by_id(self, clip_id: int | None) -> dict[str, Any] | None:
+        if clip_id is None:
+            return None
+        for clip in (self.data or {}).get("clips") or []:
+            if clip.get("clip_id") == clip_id:
+                return clip
         return None
 
-    def timeline_entry(self, index: int | None) -> dict[str, Any] | None:
-        clips = self.timeline_clips
-        if index is None or not 0 <= index < len(clips):
-            return None
-        return clips[index]
+    @property
+    def current_clip(self) -> dict[str, Any] | None:
+        return self.clip_by_id(self.current_clip_id)
 
-    @staticmethod
-    def _frames(value: Any) -> int:
-        """timelineIn/clipIn are documented as strings; parse defensively."""
-        try:
-            return int(value)
-        except (TypeError, ValueError):
-            return 0
+    @property
+    def clips(self) -> list[dict[str, Any]]:
+        return (self.data or {}).get("clips") or []
+
+    def clip_duration_frames(self, clip: dict[str, Any] | None = None) -> int | None:
+        clip = clip if clip is not None else self.current_clip
+        if clip is None:
+            return None
+        return parse_timecode_to_frames(clip.get("duration_timecode"), self.nominal_fps)
+
+    @property
+    def timecode_output(self) -> str | None:
+        """The deck's own (read-only, never written by this integration)
+        "configuration: timecode output" setting - "clip" or "timeline".
+        Determines how to interpret "transport info"'s "timecode" field.
+        """
+        return ((self.data or {}).get("configuration") or {}).get("timecode output")
 
     def clip_position_frames(self) -> int | None:
-        """Playback position within the current clip, in frames."""
-        position = self.playback.get("position")
-        if position is None:
-            return None
-        entry = self.timeline_entry(self.clip_index)
-        if entry is None:
-            return int(position)
-        return max(0, int(position) - self._frames(entry.get("timelineIn")))
+        """Playback position within the current clip, in frames.
 
-    def clip_duration_frames(self) -> int | None:
-        entry = self.timeline_entry(self.clip_index)
-        if entry is not None and entry.get("frameCount"):
-            return int(entry["frameCount"])
+        "transport info"'s "timecode" is timeline-relative or clip-relative
+        depending on the deck's own "configuration: timecode output"
+        setting. This integration deliberately never *changes* that
+        setting itself - it can affect what's shown on the deck's own
+        front-panel display, which matters for a device used live during a
+        show - but it does read it once at connect (and keep it fresh via
+        the "configuration" push notification) specifically so this
+        calculation doesn't have to guess: a value can legitimately fall
+        within a clip's own duration whether it's already clip-relative or
+        just happens to be timeline-relative and early in a long clip, so
+        range-checking alone can't tell those apart.
+        """
+        tc_frames = parse_timecode_to_frames(self.transport.get("timecode"), self.nominal_fps)
+        if tc_frames is None:
+            return None
         clip = self.current_clip
-        if clip is not None and clip.get("frameCount"):
-            return int(clip["frameCount"])
-        return None
+        duration = self.clip_duration_frames(clip)
+
+        if self.timecode_output == "timeline" and clip is not None:
+            start_frames = parse_timecode_to_frames(clip.get("start_timecode"), self.nominal_fps)
+            if start_frames is not None:
+                relative = tc_frames - start_frames
+                if duration:
+                    relative = max(0, min(relative, duration))
+                return max(0, relative)
+
+        # "clip" mode, or setting not known yet: treat as clip-relative
+        # already, clamping defensively in case it isn't.
+        if duration:
+            return max(0, min(tc_frames, duration))
+        return tc_frames
 
     def clip_progress(self) -> float | None:
         """Progress of the current clip as a percentage (0-100)."""
@@ -225,24 +326,11 @@ class HyperDeckCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         return round(min(100.0, max(0.0, pos / dur * 100)), 1)
 
     # ------------------------------------------------------------- actions
-    async def async_goto_timeline_clip(self, index: int) -> None:
-        entry = self.timeline_entry(index)
-        if entry is None:
-            return
-        await self.client.seek_frames(self._frames(entry.get("timelineIn")))
-        await self.async_request_refresh()
-
     async def async_next_clip(self) -> None:
-        idx = self.clip_index
-        if idx is not None and idx + 1 < len(self.timeline_clips):
-            await self.async_goto_timeline_clip(idx + 1)
+        await self.client.goto_clip_relative(1)
 
     async def async_previous_clip(self) -> None:
-        idx = self.clip_index
-        if idx is not None and idx > 0:
-            await self.async_goto_timeline_clip(idx - 1)
+        await self.client.goto_clip_relative(-1)
 
     async def async_restart_clip(self) -> None:
-        idx = self.clip_index
-        if idx is not None:
-            await self.async_goto_timeline_clip(idx)
+        await self.client.goto_clip_start()
