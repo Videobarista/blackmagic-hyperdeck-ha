@@ -121,8 +121,15 @@ class HyperDeckCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     async def _connect_and_sync(self) -> None:
         await self.client.connect()
         try:
+            # "clips"/"disk" deliberately omitted: on a real HyperDeck
+            # Studio Pro, both are rejected with a syntax error - likely a
+            # newer protocol addition this older firmware predates - and
+            # the deck then drops the TCP connection outright shortly
+            # after, so tolerating the error response isn't sufficient
+            # protection. The clip list is refreshed via the periodic poll
+            # instead (see CLIPS_REFRESH_EVERY), just less instantly.
             await self.client.enable_notifications(
-                transport=True, slot=True, configuration=True, clips=True, disk=True
+                transport=True, slot=True, configuration=True
             )
             await self.client.set_watchdog(WATCHDOG_PERIOD)
             device = await self.client.get_device_info()
