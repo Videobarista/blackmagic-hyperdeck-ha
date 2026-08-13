@@ -376,7 +376,23 @@ class HyperDeckClient:
         return clips
 
     async def enable_notifications(self, **flags: bool) -> None:
-        await self.send_command(_build_command("notify", flags))
+        """Enable each notification flag with its own command.
+
+        Sent individually rather than combined on one line: the protocol
+        doc's own worked examples for `notify` only ever show a single
+        parameter at a time (unlike `play`/`configuration`, which get
+        explicit multi-parameter combination examples) - and in practice a
+        real HyperDeck Studio Pro rejected a combined
+        "notify: a: true b: true ..." with a syntax error. A rejected
+        individual flag (e.g. a notification category this firmware
+        predates) is logged and skipped rather than aborting the whole
+        connection.
+        """
+        for key, value in flags.items():
+            try:
+                await self.send_command(_build_command("notify", {key: value}))
+            except HyperDeckCommandError as err:
+                _LOGGER.debug("HyperDeck rejected notify flag %r: %s", key, err)
 
     async def set_watchdog(self, period: int) -> None:
         await self.send_command(f"watchdog: period: {period}")
