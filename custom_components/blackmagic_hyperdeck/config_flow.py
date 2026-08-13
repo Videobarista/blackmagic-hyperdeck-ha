@@ -39,20 +39,13 @@ class HyperDeckConfigFlow(ConfigFlow, domain=DOMAIN):
             client = HyperDeckClient(host, port)
             try:
                 banner = await client.connect()
-                try:
-                    device = await client.get_device_info()
-                finally:
-                    await client.disconnect()
+                await client.disconnect()
             except HyperDeckConnectionError:
                 errors["base"] = "cannot_connect"
             except HyperDeckError:
                 errors["base"] = "unknown"
             else:
-                title = (
-                    device.get("name")
-                    or banner.params.get("model")
-                    or f"HyperDeck ({host})"
-                )
+                title = banner.params.get("model") or f"HyperDeck ({host})"
                 return self.async_create_entry(
                     title=title,
                     data={CONF_HOST: host, CONF_PORT: port},

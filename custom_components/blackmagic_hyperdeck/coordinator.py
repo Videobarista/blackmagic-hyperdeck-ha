@@ -119,7 +119,7 @@ class HyperDeckCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
     # ------------------------------------------------------ connect/sync
     async def _connect_and_sync(self) -> None:
-        await self.client.connect()
+        banner = await self.client.connect()
         try:
             # "clips"/"disk" deliberately omitted: on a real HyperDeck
             # Studio Pro, both are rejected with a syntax error - likely a
@@ -132,7 +132,15 @@ class HyperDeckCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 transport=True, slot=True, configuration=True
             )
             await self.client.set_watchdog(WATCHDOG_PERIOD)
-            device = await self.client.get_device_info()
+            # "device info" deliberately NOT called here: on the same real
+            # Studio Pro (protocol version 1.8, per the banner) it doesn't
+            # error either - the deck just closes the connection the
+            # instant it receives that command, with no response at all.
+            # The banner already gives us "model" and "protocol version"
+            # for free on every connect, which covers what entity.py
+            # actually needs; "name"/"unique id"/"slot count"/"software
+            # version" are simply not available on this firmware.
+            device = dict(banner.params)
             transport = await self.client.get_transport_info()
             slot = await self.client.get_slot_info()
             configuration = await self.client.get_configuration()
