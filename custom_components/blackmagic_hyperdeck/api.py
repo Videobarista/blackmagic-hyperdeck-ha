@@ -233,6 +233,7 @@ class HyperDeckClient:
             ) from err
 
         self._connected.set()
+        _LOGGER.debug("HyperDeck <- %s %s %s (banner)", banner.code, banner.text, banner.params)
         self._reader_task = asyncio.get_event_loop().create_task(self._reader_loop())
         return banner
 
@@ -262,6 +263,7 @@ class HyperDeckClient:
         assert self._reader is not None
         raw = await self._reader.readline()
         if not raw:
+            _LOGGER.debug("HyperDeck %s:%s closed the connection", self.host, self.port)
             raise HyperDeckConnectionError("Connection closed by HyperDeck")
         return raw.decode("utf-8", errors="replace").rstrip("\r\n")
 
@@ -296,6 +298,7 @@ class HyperDeckClient:
         try:
             while True:
                 block = await self._read_block()
+                _LOGGER.debug("HyperDeck <- %s %s %s", block.code, block.text, block.params)
                 if block.is_async:
                     if self._on_notification is not None:
                         try:
@@ -334,6 +337,7 @@ class HyperDeckClient:
         async with self._send_lock:
             loop = asyncio.get_event_loop()
             self._pending = loop.create_future()
+            _LOGGER.debug("HyperDeck -> %s", command)
             try:
                 self._writer.write((command + "\r\n").encode("utf-8"))
                 await self._writer.drain()
