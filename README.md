@@ -1,37 +1,37 @@
-# Blackmagic HyperDeck voor Home Assistant
-Custom integratie (HACS) voor Blackmagic HyperDeck disk recorders (Studio, Extreme, Shuttle, en oudere modellen) via het **HyperDeck Ethernet Protocol** (TCP-poort 9993).
+# Blackmagic HyperDeck for Home Assistant
+Custom integration (HACS) for Blackmagic HyperDeck disk recorders (Studio, Extreme, Shuttle, and older models) via the **HyperDeck Ethernet Protocol** (TCP port 9993).
 
-> **v0.2.0**: deze integratie gebruikte in v0.1.0 Blackmagic's nieuwe REST API (december 2024, poort 80). Die zit alleen op recente firmware van de huidige Extreme/Shuttle/Studio-lijn. Het Ethernet-protocol op poort 9993 zit al sinds ~2013 op vrijwel elke HyperDeck met netwerkpoort — oud én nieuw — en is nooit vervangen door REST, alleen aangevuld. Vandaar de overstap: bredere compatibiliteit voor iedereen die deze integratie via HACS installeert.
+> **v0.2.0**: this integration used Blackmagic's new REST API (December 2024, port 80) in v0.1.0. That's only present on recent firmware for the current Extreme/Shuttle/Studio line. The Ethernet Protocol on port 9993 has shipped on virtually every networked HyperDeck since ~2013 — old and new alike — and was never replaced by REST, only supplemented by it. Hence the switch: broader compatibility for anyone installing this integration via HACS.
 
 ## Features
-- **Media player** entity met play / pause / stop / next / previous / seek, clipnaam, en een live voortgangsbalk.
-- **Buttons**: Play, Stop, Record, Next clip, Previous clip, Restart clip — voor eigen dashboard-layouts.
-- **Sensors**: Tijdcode, Huidige clip, Transportmodus, Clipvoortgang (%).
-- **Switches**: Loop tijdlijn, Loop enkele clip.
-- **Realtime updates** via de asynchrone notificaties van het protocol zelf (`notify: transport/slot/configuration/clips/disk`), met een lichte poll (elke 2 s) als aanvulling voor de tijdcode — die stuurt de HyperDeck bewust niet als losse pushnotificatie (dat zou bij elke frame een bericht sturen en de verbinding verstoppen).
+- **Media player** entity with play / pause / stop / next / previous / seek, clip name, and a live progress bar.
+- **Buttons**: Play, Stop, Record, Next clip, Previous clip, Restart clip — for custom dashboard layouts.
+- **Sensors**: Timecode, Current clip, Transport mode, Clip progress (%).
+- **Switches**: Loop timeline, Loop single clip.
+- **Real-time updates** via the protocol's own asynchronous notifications (`notify: transport/slot/configuration/clips/disk`), with a light poll (every 2 s) as a supplement for the timecode — the HyperDeck deliberately isn't asked to push that as its own notification (that would send a message on every single frame and clog the connection).
 
-## Vereisten
-- HyperDeck met ethernet-aansluiting en netwerkverbinding (poort 9993 bereikbaar vanaf Home Assistant).
-- Home Assistant 2024.6 of nieuwer.
+## Requirements
+- HyperDeck with an ethernet connection and network access (port 9993 reachable from Home Assistant).
+- Home Assistant 2024.6 or newer.
 
-## Installatie (HACS)
-1. HACS → drie puntjes rechtsboven → *Custom repositories*.
-2. Voeg de URL van deze repository toe, categorie **Integration**.
-3. Installeer *Blackmagic HyperDeck* en herstart Home Assistant.
-4. Instellingen → Apparaten & Diensten → *Integratie toevoegen* → **Blackmagic HyperDeck**.
-5. Vul het IP-adres van de HyperDeck in (poort 9993 is standaard).
+## Installation (HACS)
+1. HACS → three dots top right → *Custom repositories*.
+2. Add this repository's URL, category **Integration**.
+3. Install *Blackmagic HyperDeck* and restart Home Assistant.
+4. Settings → Devices & Services → *Add integration* → **Blackmagic HyperDeck**.
+5. Enter the HyperDeck's IP address (port 9993 is the default).
 
-Handmatig kan ook: kopieer `custom_components/blackmagic_hyperdeck` naar je `config/custom_components/` map.
+Manual install also works: copy `custom_components/blackmagic_hyperdeck` to your `config/custom_components/` folder.
 
-## Dashboard-voorbeelden
-### Media control card (voortgangsbalk inbegrepen)
+## Dashboard examples
+### Media control card (progress bar included)
 ```yaml
 type: media-control
 entity: media_player.hyperdeck
 ```
 
-### Tile met voortgangsbalk-gevoel
-De sensor `sensor.hyperdeck_clip_progress` (0–100 %) werkt goed met een gauge of een custom bar card:
+### Tile with a progress-bar feel
+The `sensor.hyperdeck_clip_progress` sensor (0–100 %) works well with a gauge or a custom bar card:
 ```yaml
 type: gauge
 entity: sensor.hyperdeck_clip_progress
@@ -40,14 +40,14 @@ max: 100
 needle: false
 ```
 
-Of met [custom:bar-card](https://github.com/custom-cards/bar-card) via HACS voor een echte oplopende balk:
+Or with [custom:bar-card](https://github.com/custom-cards/bar-card) via HACS for a real filling bar:
 ```yaml
 type: custom:bar-card
 entity: sensor.hyperdeck_clip_progress
 max: 100
 ```
 
-### Transport-knoppen
+### Transport buttons
 ```yaml
 type: horizontal-stack
 cards:
@@ -63,15 +63,15 @@ cards:
     entity: button.hyperdeck_next_clip
 ```
 
-## Hoe de voortgangsbalk werkt
-De integratie geeft `media_position`, `media_duration` en `media_position_updated_at` door aan Home Assistant; de frontend rekent daar zelf realtime de balk mee uit. De positie binnen de huidige clip hangt af van de `configuration: timecode output`-instelling op het apparaat (`clip` of `timeline`) — die twee gebruiken een andere referentie voor de tijdcode die het protocol teruggeeft. De integratie **leest** die instelling uit bij het verbinden (en houdt 'm actueel via de bijbehorende pushnotificatie) om de tijdcode altijd correct te interpreteren, maar **wijzigt** 'm nooit zelf: dat beïnvloedt namelijk ook wat er op het voorpaneel van het apparaat te zien is, en dat wil je niet stiekem laten veranderen tijdens gebruik.
+## How the progress bar works
+The integration passes `media_position`, `media_duration`, and `media_position_updated_at` to Home Assistant; the frontend calculates the bar itself in real time. Position within the current clip depends on the device's own `configuration: timecode output` setting (`clip` or `timeline`) — the two use a different reference point for the timecode the protocol returns. The integration **reads** that setting on connect (and keeps it current via the matching push notification) so it always interprets the timecode correctly, but it **never changes** it itself: that setting also affects what shows on the device's own front-panel display, and that's not something that should change on you mid-use without asking.
 
-## Opmerkingen
-- **Loop / Loop enkele clip**: het protocol heeft geen los commando om deze twee vlaggen te zetten — ze zijn parameters van het `play`-commando zelf. De switches sturen daarom een `play`-commando met de huidige snelheid ongewijzigd erbij, zodat omzetten terwijl het apparaat stilstaat niet per ongeluk de weergave start. Dit is een echte beperking van het protocol, geen bug.
-- **Next/previous/select** clip gaan nu rechtstreeks via `goto: clip id`, native ondersteund door het protocol — geen omweg via seeken meer nodig zoals bij de REST-versie.
-- De tijdcode-sensor wordt bewust **niet** via een pushnotificatie geabonneerd (kan per frame binnenkomen); die update via de lichte poll (elke 2 s).
-- Record start opname op de actieve media. Wees voorzichtig met de record-knop op gedeelde dashboards.
-- De verbinding is één persistente TCP-sessie per HyperDeck; bij verbindingsverlies probeert de integratie elke 10 seconden opnieuw te verbinden.
+## Notes
+- **Loop / Loop single clip**: the protocol has no standalone command to set these two flags — they're parameters of the `play` command itself. The switches therefore send a `play` command with the current speed passed through unchanged, so flipping a switch while the deck is stopped doesn't accidentally start playback. This is a genuine protocol limitation, not a bug.
+- **Next/previous/select** clip now go straight through `goto: clip id`, natively supported by the protocol — no more seek-based workaround like the REST version needed.
+- The timecode sensor is deliberately **not** subscribed via a push notification (it could arrive every frame); it updates via the light poll (every 2 s) instead.
+- Record starts recording on the active media. Be careful with the record button on shared dashboards.
+- The connection is a single persistent TCP session per HyperDeck; on connection loss, the integration retries every 10 seconds.
 
 ## License
 Released under the [MIT License](LICENSE). Copyright (c) 2026 VideoBarista.
