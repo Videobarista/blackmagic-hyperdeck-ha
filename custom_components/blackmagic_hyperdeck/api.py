@@ -31,6 +31,9 @@ from .const import COMMAND_TIMEOUT, CONNECT_TIMEOUT, DEFAULT_FPS
 _LOGGER = logging.getLogger(__name__)
 
 _TIMECODE_RE = re.compile(r"^(\d{2}:\d{2}:\d{2}:\d{2})\s*")
+_TRAILING_TIMECODES_RE = re.compile(
+    r"\s+(\d{2}:\d{2}:\d{2}:\d{2})\s+(\d{2}:\d{2}:\d{2}:\d{2})\s*$"
+)
 _RATE_RE = re.compile(r"([pi])(\d+(?:\.\d+)?)$")
 
 # Every non-drop frame rate documented across HyperDeck's video-format
@@ -151,13 +154,27 @@ def parse_timecode_to_frames(timecode: str | None, nominal_fps: int) -> int | No
     return ((h * 3600 + m * 60 + s) * nominal_fps) + f
 
 
-def parse_clip_line(clip_id: str, rest: str) -> dict[str, Any]:
+def frames_to_timecode(frames: int, nominal_fps: int) -> str:
+    """Inverse of parse_timecode_to_frames: frame count -> HH:MM:SS:FF."""
+    nominal_fps = nominal_fps or 25
+    total_seconds, ff = divmod(max(0, int(frames)), nominal_fps)
+    hh, remainder = divmod(total_seconds, 3600)
+    mm, ss = divmod(remainder, 60)
+    return f"{hh:02d}:{mm:02d}:{ss:02d}:{ff:02d}"
+
+
+def parse_clip_line_v2(clip_id: str, rest: str) -> dict[str, Any]:
     """Parse one line of a `clips get: version: 2` response.
 
     Format: "{Clip ID}: {Clip start timecode} {Duration timecode}
     {inTimecode} {outTimecode} {name}". The name is last specifically so it
     can contain spaces; we identify the four fixed timecodes by pattern
     from the front and treat everything left over as the name.
+
+    Not currently used by default - see get_clips() - since the
+    "version: 2" parameter itself isn't recognised on at least one real
+    older HyperDeck (protocol version 1.8), where it triggers a syntax
+    error. Kept here in case a future version negotiates up to it.
     """
     tokens: list[str] = []
     remaining = rest
@@ -180,6 +197,35 @@ def parse_clip_line(clip_id: str, rest: str) -> dict[str, Any]:
         "in_timecode": in_tc,
         "out_timecode": out_tc,
         "name": remaining.strip() or None,
+    }
+
+
+def parse_clip_line_v1(clip_id: str, rest: str) -> dict[str, Any]:
+    """Parse one line of the default (bare `clips get`) response.
+
+    Format: "{Clip ID}: {Name} {Start timecode} {Duration timecode}". Here
+    the name comes *first*, so - unlike v2 - we identify the two fixed
+    timecodes by pattern from the *end* of the line and treat everything
+    before them as the name. No in/out points in this format.
+    """
+    match = _TRAILING_TIMECODES_RE.search(rest)
+    if match:
+        start_tc, duration_tc = match.group(1), match.group(2)
+        name = rest[: match.start()].strip()
+    else:
+        start_tc = duration_tc = None
+        name = rest.strip()
+    try:
+        clip_id_int = int(clip_id)
+    except ValueError:
+        clip_id_int = -1
+    return {
+        "clip_id": clip_id_int,
+        "start_timecode": start_tc,
+        "duration_timecode": duration_tc,
+        "in_timecode": None,
+        "out_timecode": None,
+        "name": name or None,
     }
 
 
@@ -371,12 +417,23 @@ class HyperDeckClient:
         return resp.params
 
     async def get_clips(self) -> list[dict[str, Any]]:
-        resp = await self.send_command("clips get: version: 2")
+        """Fetch the timeline clip list.
+
+        Deliberately sends the bare `clips get` (default/v1 response
+        format) rather than `clips get: version: 2`: on real older
+        hardware (protocol version 1.8), the "version" parameter itself
+        isn't recognised and produces a syntax error. v1's format puts the
+        clip name first instead of last, which is harder to parse
+        unambiguously when a name contains spaces (see
+        parse_clip_line_v1), but that trade-off is worth it for broad
+        compatibility with older decks.
+        """
+        resp = await self.send_command("clips get")
         clips: list[dict[str, Any]] = []
         for key, rest in resp.params.items():
             if key == "clip count":
                 continue
-            clips.append(parse_clip_line(key, rest))
+            clips.append(parse_clip_line_v1(key, rest))
         return clips
 
     async def enable_notifications(self, **flags: bool) -> None:
@@ -437,6 +494,22 @@ class HyperDeckClient:
         """Jump to the start of a specific clip, by its (1-based) clip id."""
         await self.send_command(f"goto: clip id: {int(clip_id)}")
 
-    async def goto_clip_frame(self, frame: int) -> None:
-        """Seek to a frame position within the current clip."""
-        await self.send_command(f"goto: clip: {int(frame)}")
+    async def goto_clip_frame(self, frame: int, nominal_fps: int) -> None:
+        """Seek to a frame position within the current clip via 'goto: clip:'.
+
+        Not currently used - see goto_timecode() and the coordinator's
+        seek_target_timecode(). On a real older HyperDeck (protocol 1.8),
+        "goto: clip: {n}" is rejected as "invalid value" both as a plain
+        integer AND as a timecode string, while "goto: clip: start" (the
+        keyword form) works fine. Since both value shapes failed for this
+        specific sub-command, the "goto: timecode:" command (a different
+        sub-command entirely, timeline-absolute rather than clip-relative)
+        is worth trying instead - kept here in case a future device turns
+        out to support this form after all.
+        """
+        timecode = frames_to_timecode(frame, nominal_fps)
+        await self.send_command(f"goto: clip: {timecode}")
+
+    async def goto_timecode(self, timecode: str) -> None:
+        """Seek to an absolute timecode position on the timeline."""
+        await self.send_command(f"goto: timecode: {timecode}")

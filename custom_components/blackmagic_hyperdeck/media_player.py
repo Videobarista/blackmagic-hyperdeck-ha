@@ -165,6 +165,8 @@ class HyperDeckMediaPlayer(HyperDeckEntity, MediaPlayerEntity):
         await self.coordinator.async_refresh_transport()
 
     async def async_media_seek(self, position: float) -> None:
-        frame = round(position * self.coordinator.fps)
-        await self.coordinator.client.goto_clip_frame(frame)
-        await self.coordinator.async_refresh_transport()
+        c = self.coordinator
+        frame = round(position * c.fps)
+        target = c.seek_target_timecode(frame)
+        await c.client.goto_timecode(target)
+        await c.async_refresh_transport()

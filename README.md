@@ -71,6 +71,7 @@ The integration passes `media_position`, `media_duration`, and `media_position_u
 - **Next/previous/select** clip now go straight through `goto: clip id`, natively supported by the protocol — no more seek-based workaround like the REST version needed.
 - The timecode sensor is deliberately **not** subscribed via a push notification (it could arrive every frame); it updates via the light poll (every 2 s) instead.
 - Record starts recording on the active media. Be careful with the record button on shared dashboards.
+- **Seeking (dragging the progress bar)**: uses `goto: timecode: HH:MM:SS:FF` (absolute timeline position) rather than `goto: clip: {frame}` (clip-relative). On a real older HyperDeck (Studio Pro, protocol 1.8), the latter was rejected as "invalid value" in both a plain-integer and a timecode-string form, while `goto: clip: start` (the keyword form) worked fine - pointing at that specific sub-command rather than the value's shape. This has not yet been confirmed working on real hardware; if it still fails on your deck, that's a known open issue - every other control (play/pause/stop/next/previous/restart/loop) is unaffected.
 - The connection is a single persistent TCP session per HyperDeck; on connection loss, the integration retries every 10 seconds.
 
 ## License

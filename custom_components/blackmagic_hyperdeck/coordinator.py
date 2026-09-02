@@ -26,6 +26,7 @@ from .api import (
     HyperDeckConnectionError,
     HyperDeckError,
     HyperDeckResponse,
+    frames_to_timecode,
     parse_timecode_to_frames,
     parse_video_format_fps,
 )
@@ -36,7 +37,6 @@ from .const import (
     NOMINAL_FPS,
     POLL_INTERVAL,
     RECONNECT_DELAY,
-    WATCHDOG_PERIOD,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -131,7 +131,18 @@ class HyperDeckCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             await self.client.enable_notifications(
                 transport=True, slot=True, configuration=True
             )
-            await self.client.set_watchdog(WATCHDOG_PERIOD)
+            # "watchdog: period: {n}" deliberately NOT called: on the real
+            # Studio Pro, it's consistently the last command to get a
+            # clean "200 ok" right before the deck closes the connection -
+            # true in two separate logs, even though the *next* command
+            # differed each time ("device info" once, "transport info"
+            # the other). That points at watchdog itself (possibly a
+            # units bug in this old firmware - e.g. treating "30" as
+            # milliseconds instead of seconds) rather than at whatever
+            # command happens to follow it. Not essential either way: our
+            # own poll loop (POLL_INTERVAL) already keeps the connection
+            # busy far more often than any sane watchdog window would
+            # require, so there's nothing to lose by skipping it.
             # "device info" deliberately NOT called here: on the same real
             # Studio Pro (protocol version 1.8, per the banner) it doesn't
             # error either - the deck just closes the connection the
@@ -193,17 +204,28 @@ class HyperDeckCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
     # ------------------------------------------------------- notifications
     def _on_notification(self, block: HyperDeckResponse) -> None:
-        """Handle an unsolicited push from the deck (runs on the event loop)."""
+        """Handle an unsolicited push from the deck (runs on the event loop).
+
+        Confirmed on real hardware: these pushes are partial - e.g. a
+        "508 transport info" after a play command arrived as just
+        {'status': 'play', 'speed': '100'}, omitting every other transport
+        field. Merging into the existing sub-dict (rather than replacing
+        it, as a naive translation of the sync "full state" responses
+        would do) keeps the fields that didn't change instead of losing
+        them until the next poll.
+        """
         if block.text == "transport info":
-            self._merge({"transport": block.params})
+            self._merge({"transport": {**self.transport, **block.params}})
             self.position_updated_at = dt_util.utcnow()
         elif block.text == "slot info":
-            self._merge({"slot": block.params})
+            slot = (self.data or {}).get("slot") or {}
+            self._merge({"slot": {**slot, **block.params}})
         elif block.text == "configuration":
             # Not exposed as its own entity, but "timecode output" here is
             # what clip_position_frames() needs to interpret "timecode"
             # unambiguously - see that method's docstring.
-            self._merge({"configuration": block.params})
+            configuration = (self.data or {}).get("configuration") or {}
+            self._merge({"configuration": {**configuration, **block.params}})
         elif block.text in ("clips info", "disk list"):
             # A partial "add" or full "snapshot" update; simplest and most
             # robust is to just refetch the authoritative list.
@@ -339,6 +361,27 @@ class HyperDeckCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         if pos is None or not dur:
             return None
         return round(min(100.0, max(0.0, pos / dur * 100)), 1)
+
+    def seek_target_timecode(self, within_clip_frame: int) -> str:
+        """Absolute timeline timecode for a clip-relative seek target.
+
+        Used with the client's `goto_timecode()` (timeline-absolute)
+        rather than `goto_clip_frame()` ("goto: clip: {n}"/timecode form),
+        which real older hardware rejects outright regardless of value
+        shape - see goto_clip_frame()'s docstring. Adds the current
+        clip's own start position (best-effort; 0 if unknown or if the
+        clip already starts the timeline) to the desired within-clip
+        offset, so a single-clip timeline (the common case) seeks
+        correctly with no adjustment needed, and a later clip on a
+        multi-clip timeline gets a reasonable approximation.
+        """
+        clip = self.current_clip
+        start_frames = 0
+        if clip is not None:
+            start_frames = (
+                parse_timecode_to_frames(clip.get("start_timecode"), self.nominal_fps) or 0
+            )
+        return frames_to_timecode(start_frames + within_clip_frame, self.nominal_fps)
 
     # ------------------------------------------------------------- actions
     async def async_next_clip(self) -> None:
