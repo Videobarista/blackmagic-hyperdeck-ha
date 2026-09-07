@@ -10,7 +10,7 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from . import HyperDeckConfigEntry
 from .coordinator import HyperDeckCoordinator
-from .entity import HyperDeckEntity
+from .entity import HyperDeckEntity, suppress_command_errors
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -81,6 +81,7 @@ class HyperDeckButton(HyperDeckEntity, ButtonEntity):
         self.entity_description = description
         self._attr_unique_id = f"{coordinator.config_entry.entry_id}_{description.key}"
 
+    @suppress_command_errors
     async def async_press(self) -> None:
         await self.entity_description.press_fn(self.coordinator)
         await self.coordinator.async_refresh_transport()

@@ -16,7 +16,7 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from . import HyperDeckConfigEntry
 from .coordinator import HyperDeckCoordinator
-from .entity import HyperDeckEntity
+from .entity import HyperDeckEntity, suppress_command_errors
 
 # Deck transport "status" values that represent some form of active
 # playback (as opposed to fully stopped/idle or recording).
@@ -125,6 +125,7 @@ class HyperDeckMediaPlayer(HyperDeckEntity, MediaPlayerEntity):
         clip = self.coordinator.current_clip
         return clip.get("name") if clip else None
 
+    @suppress_command_errors
     async def async_select_source(self, source: str) -> None:
         for clip in self.coordinator.clips:
             if (clip.get("name") or f"Clip {clip['clip_id']}") == source:
@@ -142,6 +143,7 @@ class HyperDeckMediaPlayer(HyperDeckEntity, MediaPlayerEntity):
             return RepeatMode.ALL
         return RepeatMode.OFF
 
+    @suppress_command_errors
     async def async_set_repeat(self, repeat: RepeatMode) -> None:
         # NOTE: the Ethernet Protocol has no standalone "set loop/single
         # clip" command - loop and single-clip are parameters of "play"
@@ -157,28 +159,34 @@ class HyperDeckMediaPlayer(HyperDeckEntity, MediaPlayerEntity):
         await c.async_refresh_transport()
 
     # ------------------------------------------------------------ commands
+    @suppress_command_errors
     async def async_media_play(self) -> None:
         c = self.coordinator
         await c.client.play(loop=c.loop, single_clip=c.single_clip, speed=100)
         await c.async_refresh_transport()
 
+    @suppress_command_errors
     async def async_media_pause(self) -> None:
         c = self.coordinator
         await c.client.play(loop=c.loop, single_clip=c.single_clip, speed=0)
         await c.async_refresh_transport()
 
+    @suppress_command_errors
     async def async_media_stop(self) -> None:
         await self.coordinator.client.stop()
         await self.coordinator.async_refresh_transport()
 
+    @suppress_command_errors
     async def async_media_next_track(self) -> None:
         await self.coordinator.async_next_clip()
         await self.coordinator.async_refresh_transport()
 
+    @suppress_command_errors
     async def async_media_previous_track(self) -> None:
         await self.coordinator.async_previous_clip()
         await self.coordinator.async_refresh_transport()
 
+    @suppress_command_errors
     async def async_media_seek(self, position: float) -> None:
         c = self.coordinator
         frame = round(position * c.fps)

@@ -19,7 +19,7 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from . import HyperDeckConfigEntry
 from .coordinator import HyperDeckCoordinator
-from .entity import HyperDeckEntity
+from .entity import HyperDeckEntity, suppress_command_errors
 
 
 async def async_setup_entry(
@@ -53,6 +53,7 @@ class HyperDeckLoopSwitch(HyperDeckEntity, SwitchEntity):
         c = self.coordinator
         return c.single_clip if self._flag == "single_clip" else c.loop
 
+    @suppress_command_errors
     async def _set(self, value: bool) -> None:
         c = self.coordinator
         loop = value if self._flag == "loop" else c.loop
