@@ -53,8 +53,23 @@ class HyperDeckMediaPlayer(HyperDeckEntity, MediaPlayerEntity):
 
     # -------------------------------------------------------------- state
     @property
+    def available(self) -> bool:
+        # Deliberately always available, unlike the default
+        # CoordinatorEntity behaviour (unavailable whenever
+        # coordinator.last_update_success is False): a HyperDeck that's
+        # merely powered off or unreachable reads more naturally as "Off"
+        # than as the grey "Unavailable" badge, which normally signals a
+        # genuine integration problem rather than an expected device
+        # state. Buttons/switches/sensors keep the default behaviour -
+        # there's nothing useful to press/show for those while
+        # disconnected.
+        return True
+
+    @property
     def state(self) -> MediaPlayerState:
         c = self.coordinator
+        if not c.last_update_success:
+            return MediaPlayerState.OFF
         if c.is_recording:
             # media_player has no dedicated recording state; the "record"
             # sensor/attribute below carries the detail.
