@@ -427,8 +427,18 @@ class HyperDeckClient:
         unambiguously when a name contains spaces (see
         parse_clip_line_v1), but that trade-off is worth it for broad
         compatibility with older decks.
+
+        Returns an empty list rather than raising when the deck rejects
+        the command because there's simply nothing to list (e.g. "105 no
+        disk" with no media inserted, or "107 timeline empty") - on real
+        hardware, this happened during initial setup and took the whole
+        integration down with it, when the right behaviour is just to
+        show no clips until media is inserted.
         """
-        resp = await self.send_command("clips get")
+        try:
+            resp = await self.send_command("clips get")
+        except HyperDeckCommandError:
+            return []
         clips: list[dict[str, Any]] = []
         for key, rest in resp.params.items():
             if key == "clip count":
