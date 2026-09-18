@@ -1,4 +1,12 @@
 # Blackmagic HyperDeck for Home Assistant
+
+[![CodeQL](https://github.com/Videobarista/blackmagic-hyperdeck-ha/actions/workflows/codeql.yml/badge.svg)](https://github.com/Videobarista/blackmagic-hyperdeck-ha/actions/workflows/codeql.yml)
+[![Hassfest](https://github.com/Videobarista/blackmagic-hyperdeck-ha/actions/workflows/hassfest.yml/badge.svg)](https://github.com/Videobarista/blackmagic-hyperdeck-ha/actions/workflows/hassfest.yml)
+[![HACS Validation](https://github.com/Videobarista/blackmagic-hyperdeck-ha/actions/workflows/hacs.yml/badge.svg)](https://github.com/Videobarista/blackmagic-hyperdeck-ha/actions/workflows/hacs.yml)
+[![HACS Custom](https://img.shields.io/badge/HACS-Custom-orange.svg)](https://github.com/hacs/integration)
+[![GitHub release](https://img.shields.io/github/v/release/Videobarista/blackmagic-hyperdeck-ha)](https://github.com/Videobarista/blackmagic-hyperdeck-ha/releases)
+[![License](https://img.shields.io/github/license/Videobarista/blackmagic-hyperdeck-ha)](LICENSE)
+
 Custom integration (HACS) for Blackmagic HyperDeck disk recorders (Studio, Extreme, Shuttle, and older models) via the **HyperDeck Ethernet Protocol** (TCP port 9993).
 
 > **v0.2.0**: this integration used Blackmagic's new REST API (December 2024, port 80) in v0.1.0. That's only present on recent firmware for the current Extreme/Shuttle/Studio line. The Ethernet Protocol on port 9993 has shipped on virtually every networked HyperDeck since ~2013 — old and new alike — and was never replaced by REST, only supplemented by it. Hence the switch: broader compatibility for anyone installing this integration via HACS.
@@ -79,7 +87,7 @@ The integration passes `media_position`, `media_duration`, and `media_position_u
 - The connection is a single persistent TCP session per HyperDeck; on connection loss, the integration retries every 10 seconds.
 
 ## License
-Released under the [MIT License](LICENSE). Copyright (c) 2026 VideoBarista.
+Released under the [MIT License](LICENSE). Copyright (c) 2026 Videobarista.
 Blackmagic Design, HyperDeck and Blackmagic HyperDeck are trademarks of Blackmagic
 Design Pty Ltd. This project is an independent community integration and is
 not affiliated with or endorsed by Blackmagic Design.

@@ -293,20 +293,21 @@ class HyperDeckClient:
             task.cancel()
             try:
                 await task
-            except (asyncio.CancelledError, Exception):  # noqa: BLE001
-                pass
+            except (asyncio.CancelledError, Exception) as err:  # noqa: BLE001
+                _LOGGER.debug("HyperDeck reader task ended during close: %s", err)
         if self._writer is not None:
             try:
                 self._writer.close()
                 await self._writer.wait_closed()
-            except OSError:
-                pass
+            except OSError as err:
+                _LOGGER.debug("HyperDeck writer close failed (already gone): %s", err)
         self._writer = None
         self._reader = None
 
     # ------------------------------------------------------------ reading
     async def _readline(self) -> str:
-        assert self._reader is not None
+        if self._reader is None:
+            raise HyperDeckConnectionError("Not connected to HyperDeck")
         raw = await self._reader.readline()
         if not raw:
             _LOGGER.debug("HyperDeck %s:%s closed the connection", self.host, self.port)
@@ -437,7 +438,8 @@ class HyperDeckClient:
         """
         try:
             resp = await self.send_command("clips get")
-        except HyperDeckCommandError:
+        except HyperDeckCommandError as err:
+            _LOGGER.debug("HyperDeck has no clips to list: %s", err)
             return []
         clips: list[dict[str, Any]] = []
         for key, rest in resp.params.items():

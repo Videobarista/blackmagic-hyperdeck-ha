@@ -185,7 +185,8 @@ class HyperDeckCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             return
         try:
             transport = await self.client.get_transport_info()
-        except HyperDeckError:
+        except HyperDeckError as err:
+            _LOGGER.debug("Could not refresh transport info: %s", err)
             return
         self._merge({"transport": transport})
         self.position_updated_at = dt_util.utcnow()
@@ -193,7 +194,8 @@ class HyperDeckCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     async def _refresh_clips(self) -> None:
         try:
             clips = await self.client.get_clips()
-        except HyperDeckError:
+        except HyperDeckError as err:
+            _LOGGER.debug("Could not refresh clip list: %s", err)
             return
         self._merge({"clips": clips})
 
