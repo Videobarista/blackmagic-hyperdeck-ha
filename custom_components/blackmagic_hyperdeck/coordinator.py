@@ -23,6 +23,7 @@ from homeassistant.util import dt as dt_util
 
 from .api import (
     HyperDeckClient,
+    HyperDeckCommandError,
     HyperDeckConnectionError,
     HyperDeckError,
     HyperDeckResponse,
@@ -110,12 +111,33 @@ class HyperDeckCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     async def _poll_loop(self) -> None:
         while self.client.connected:
             await asyncio.sleep(POLL_INTERVAL)
-            transport = await self.client.get_transport_info()
-            self._merge({"transport": transport})
-            self.position_updated_at = dt_util.utcnow()
+            transport = await self._fetch(
+                self.client.get_transport_info(), default=None, label="transport info"
+            )
+            if transport is not None:
+                self._merge({"transport": transport})
+                self.position_updated_at = dt_util.utcnow()
             self._poll_count += 1
             if self._poll_count % CLIPS_REFRESH_EVERY == 0:
                 await self._refresh_clips()
+
+    async def _fetch(self, coro, *, default: Any, label: str) -> Any:
+        """Best-effort fetch: fall back to `default` rather than raising.
+
+        For a command the deck answers but rejects outright (e.g. "105 no
+        disk" with no media inserted) - confirmed on real hardware to
+        trip more than just "clips get" depending on firmware/state, not
+        worth guessing which query it'll be each time. Only
+        HyperDeckCommandError is caught here; a genuine
+        HyperDeckConnectionError (the socket itself is gone) still
+        propagates, since that needs an actual reconnect, not a fallback
+        value.
+        """
+        try:
+            return await coro
+        except HyperDeckCommandError as err:
+            _LOGGER.debug("Could not fetch %s: %s", label, err)
+            return default
 
     # ------------------------------------------------------ connect/sync
     async def _connect_and_sync(self) -> None:
@@ -152,10 +174,18 @@ class HyperDeckCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             # actually needs; "name"/"unique id"/"slot count"/"software
             # version" are simply not available on this firmware.
             device = dict(banner.params)
-            transport = await self.client.get_transport_info()
-            slot = await self.client.get_slot_info()
-            configuration = await self.client.get_configuration()
-            clips = await self.client.get_clips()
+            transport = await self._fetch(
+                self.client.get_transport_info(), default={}, label="transport info"
+            )
+            slot = await self._fetch(
+                self.client.get_slot_info(), default={}, label="slot info"
+            )
+            configuration = await self._fetch(
+                self.client.get_configuration(), default={}, label="configuration"
+            )
+            clips = await self._fetch(
+                self.client.get_clips(), default=[], label="clips"
+            )
         except HyperDeckError:
             await self.client.disconnect()
             raise
