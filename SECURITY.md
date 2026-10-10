@@ -1,17 +1,35 @@
 # Security Policy
 
-## Supported Versions
+## Supported versions
 
-Only the latest released version of this integration is supported with fixes, including security fixes. Please update to the latest release before reporting an issue.
+Only the most recent release receives security fixes.
 
-## Reporting a Vulnerability
+| Version | Supported |
+| --- | --- |
+| Latest release | Yes |
+| Older releases | No |
 
-If you discover a security vulnerability in this project, please **do not** open a public issue. Instead, use GitHub's private reporting feature:
+## Reporting a vulnerability
 
-[Report a vulnerability](https://github.com/Videobarista/blackmagic-hyperdeck-ha/security/advisories/new)
+Please report security issues privately through GitHub's
+[security advisory form](https://github.com/Videobarista/blackmagic-teranex-ha/security/advisories/new)
+rather than in a public issue.
 
-This is a hobby project maintained in spare time, not a commercial product with a dedicated security team. You should get an acknowledgement within a few days; please allow time for a fix to be developed and tested, especially for anything that needs access to real HyperDeck hardware to verify.
+Expect an initial response within 14 days. This is a hobby project maintained
+in spare time, so please allow reasonable time for a fix before any public
+disclosure.
 
 ## Scope
 
-This integration communicates with a HyperDeck device over a local network connection (TCP, HyperDeck Ethernet Protocol). It does not send data anywhere else. As with any local-network integration, only expose the HyperDeck and your Home Assistant instance on networks you trust.
+This integration talks to a Teranex over the Blackmagic Teranex Ethernet
+Protocol on TCP port 9800. Relevant to note:
+
+- **The protocol has no authentication or encryption.** Anyone able to reach
+  port 9800 can read and change the device configuration. Keep video equipment
+  on a management VLAN that is not routed to the internet.
+- The integration stores only the host and port in the Home Assistant config
+  entry. No credentials are involved, because the protocol has none.
+- Connections are outbound only. The integration opens no listening ports.
+
+Vulnerabilities in the Teranex firmware itself belong to Blackmagic Design,
+not to this repository.

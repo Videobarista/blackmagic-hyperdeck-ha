@@ -1,0 +1,33 @@
+# Self-assessment against the Bronze tier of the Home Assistant integration
+# quality scale. Home Assistant only grades core integrations; this file
+# records which Bronze rules this custom integration follows.
+rules:
+  action-setup:
+    status: done
+    comment: save_preset is registered in async_setup as a platform entity service.
+  appropriate-polling:
+    status: exempt
+    comment: Local push. The unit sends every change itself; nothing is polled.
+  brands: done
+  common-modules: done
+  config-flow-test-coverage: done
+  config-flow: done
+  dependency-transparency: done
+  docs-actions: done
+  docs-high-level-description: done
+  docs-installation-instructions: done
+  docs-removal-instructions: done
+  entity-event-setup: done
+  entity-unique-id: done
+  has-entity-name: done
+  runtime-data: done
+  test-before-configure: done
+  test-before-setup:
+    status: exempt
+    comment: >-
+      Deliberate. The unit is often powered down by a switched outlet, so setup
+      never fails on an unreachable unit. Entities show as unavailable, a
+      Connection sensor reports the state, and the client reconnects on its
+      own as soon as the unit answers. The address is tested in the config
+      flow and in reconfigure.
+  unique-config-entry: done

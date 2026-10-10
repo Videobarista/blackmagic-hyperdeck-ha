@@ -1,0 +1,14 @@
+save_preset:
+  target:
+    entity:
+      integration: blackmagic_teranex
+      domain: select
+  fields:
+    preset:
+      required: true
+      example: 1
+      selector:
+        number:
+          min: 1
+          max: 6
+          mode: box

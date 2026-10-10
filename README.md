@@ -1,93 +1,253 @@
-# Blackmagic HyperDeck for Home Assistant
+# Blackmagic Teranex for Home Assistant
 
-[![CodeQL](https://github.com/Videobarista/blackmagic-hyperdeck-ha/actions/workflows/codeql.yml/badge.svg)](https://github.com/Videobarista/blackmagic-hyperdeck-ha/actions/workflows/codeql.yml)
-[![Hassfest](https://github.com/Videobarista/blackmagic-hyperdeck-ha/actions/workflows/hassfest.yml/badge.svg)](https://github.com/Videobarista/blackmagic-hyperdeck-ha/actions/workflows/hassfest.yml)
-[![HACS Validation](https://github.com/Videobarista/blackmagic-hyperdeck-ha/actions/workflows/hacs.yml/badge.svg)](https://github.com/Videobarista/blackmagic-hyperdeck-ha/actions/workflows/hacs.yml)
-[![HACS Custom](https://img.shields.io/badge/HACS-Custom-orange.svg)](https://github.com/hacs/integration)
-[![GitHub release](https://img.shields.io/github/v/release/Videobarista/blackmagic-hyperdeck-ha)](https://github.com/Videobarista/blackmagic-hyperdeck-ha/releases)
-[![License](https://img.shields.io/github/license/Videobarista/blackmagic-hyperdeck-ha)](LICENSE)
+[![Ruff](https://github.com/Videobarista/blackmagic-teranex-ha/actions/workflows/ruff.yml/badge.svg?branch=main)](https://github.com/Videobarista/blackmagic-teranex-ha/actions/workflows/ruff.yml)
+[![Hassfest](https://github.com/Videobarista/blackmagic-teranex-ha/actions/workflows/hassfest.yml/badge.svg?branch=main)](https://github.com/Videobarista/blackmagic-teranex-ha/actions/workflows/hassfest.yml)
+[![HACS](https://github.com/Videobarista/blackmagic-teranex-ha/actions/workflows/hacs.yml/badge.svg?branch=main)](https://github.com/Videobarista/blackmagic-teranex-ha/actions/workflows/hacs.yml)
+[![CodeQL](https://github.com/Videobarista/blackmagic-teranex-ha/actions/workflows/codeql.yml/badge.svg?branch=main)](https://github.com/Videobarista/blackmagic-teranex-ha/actions/workflows/codeql.yml)
+[![Tests](https://github.com/Videobarista/blackmagic-teranex-ha/actions/workflows/tests.yml/badge.svg?branch=main)](https://github.com/Videobarista/blackmagic-teranex-ha/actions/workflows/tests.yml)
+[![Quality scale: Bronze](https://img.shields.io/badge/quality%20scale-Bronze%20aligned-cd7f32.svg)](#quality-scale)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Latest release](https://img.shields.io/github/v/release/Videobarista/blackmagic-teranex-ha)](https://github.com/Videobarista/blackmagic-teranex-ha/releases)
 
-Custom integration (HACS) for Blackmagic HyperDeck disk recorders (Studio, Extreme, Shuttle, and older models) via the **HyperDeck Ethernet Protocol** (TCP port 9993).
+[![Open in HACS](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=Videobarista&repository=blackmagic-teranex-ha&category=integration)
 
-> **v0.2.0**: this integration used Blackmagic's new REST API (December 2024, port 80) in v0.1.0. That's only present on recent firmware for the current Extreme/Shuttle/Studio line. The Ethernet Protocol on port 9993 has shipped on virtually every networked HyperDeck since ~2013 — old and new alike — and was never replaced by REST, only supplemented by it. Hence the switch: broader compatibility for anyone installing this integration via HACS.
+Home Assistant custom integration for Blackmagic Design Teranex video
+processors, using the Teranex Ethernet Protocol on TCP port 9800.
 
-## Features
-- **Media player** entity with play / pause / stop / next / previous / seek, clip name, and a live progress bar.
-- **Buttons**: Play, Stop, Record, Next clip, Previous clip, Restart clip — for custom dashboard layouts.
-- **Sensors**: Timecode, Current clip, Transport mode, Clip progress (%).
-- **Switches**: Loop timeline, Loop single clip.
-- **Real-time updates** via the protocol's own asynchronous notifications (`notify: transport/slot/configuration/clips/disk`), with a light poll (every 2 s) as a supplement for the timecode — the HyperDeck deliberately isn't asked to push that as its own notification (that would send a message on every single frame and clog the connection).
+Developed against a **Teranex 2D**.
 
-## Requirements
-- HyperDeck with an ethernet connection and network access (port 9993 reachable from Home Assistant).
-- Home Assistant 2024.6 or newer.
+## Status
 
-## Installation (HACS)
-1. HACS → three dots top right → *Custom repositories*.
-2. Add this repository's URL, category **Integration**.
-3. Install *Blackmagic HyperDeck* and restart Home Assistant.
-4. Settings → Devices & Services → *Add integration* → **Blackmagic HyperDeck**.
-5. Enter the HyperDeck's IP address (port 9993 is the default).
+Stable, running against a Teranex 2D.
 
-Manual install also works: copy `custom_components/blackmagic_hyperdeck` to your `config/custom_components/` folder.
+## When the unit is switched off
 
-## Dashboard examples
-### Media control card (progress bar included)
+A Teranex in a rack is often powered by a switched outlet, so being off is a
+normal state rather than a fault. The integration treats it that way:
+
+- Setup never fails on an unreachable unit. Home Assistant starts, the device
+  and its entities are there, and they show as unavailable.
+- The **Connection** sensor stays available and reads *Disconnected*, so the
+  device page explains itself.
+- The device keeps its name, model and firmware version while off. They are
+  remembered from the last time the unit answered.
+- The integration keeps reconnecting in the background, starting at 5
+  seconds and backing off to once a minute, and picks the unit up as soon as
+  it answers.
+- The log gets one line when the unit goes offline and one when it comes back,
+  not a line per retry.
+
+## Why local push
+
+The Teranex sends a full state dump on connect and then pushes every change,
+whoever made it — front panel, Teranex Setup, or another controller. The
+integration holds one persistent connection and never polls, so Home Assistant
+stays in sync even when the unit is driven by other software at the same time.
+
+Two consequences of that design, both deliberate:
+
+- A command's ACK means "understood", not "applied". The integration never
+  writes optimistically; entity state changes only when the device reports it.
+- Status updates carry only the fields that changed, so they are merged into
+  the known state rather than replacing a whole block.
+
+## Installation
+
+HACS → Custom repositories → add this repository URL → category
+**Integration** → install → restart Home Assistant → Settings → Devices &
+services → Add integration → *Blackmagic Teranex*.
+
+Enter the IP address of the unit. Port 9800 is the default.
+
+## Changing the IP address
+
+Settings → Devices & services → *Blackmagic Teranex* → three-dot menu on
+the entry → **Reconfigure**. Enter the new address; it is only saved once the
+unit answers on it, so a typo never breaks a working setup. Entities, history,
+dashboards and automations all stay as they are.
+
+The Teranex ships with DHCP enabled. Giving it a DHCP reservation, or a static
+address in Teranex Setup, saves you from doing this after every router restart.
+
+## Entities
+
+Around ninety entities. The ones you are least likely to need are disabled by
+default; enable them from the device page.
+
+Entity names are prefixed by function — `Proc amp`, `Video adjust`, `Audio`,
+`Noise reduction`, `Timecode`, `Captions` — because Home Assistant sorts a
+device page alphabetically. Set-and-forget settings sit under Configuration
+rather than Controls, so what is left in Controls is what you touch during a
+show.
+
+### Video
+
+| Entity | Type |
+| --- | --- |
+| Video input, Audio source | select |
+| Output format, Output aspect ratio, Output analogue | select |
+| Proc amp gain, black level, saturation, hue, sharpness, R-Y, B-Y | number |
+| Proc amp red, green and blue trim | number |
+| Video adjust luma and chroma clipping | number |
+| Video adjust fill luma, Cb and Cr | number |
+| Video input auto detection, wide SD source | switch |
+
+### Noise reduction
+
+| Entity | Type |
+| --- | --- |
+| Noise reduction | switch |
+| Noise reduction bias | number |
+| Split screen, Red overlay | switch |
+
+### Test pattern
+
+| Entity | Type |
+| --- | --- |
+| Test pattern | select |
+| Test pattern on signal loss | select |
+
+### Audio
+
+| Entity | Type |
+| --- | --- |
+| Audio output 1 to 16 | select |
+| Audio input level | number |
+| Audio delay | number |
+
+### Timecode and captions
+
+| Entity | Type |
+| --- | --- |
+| Timecode mode, start source, drop frame | select |
+| Timecode start value, jam sync value | text |
+| Timecode input and output line | number |
+| Captions insert | switch |
+| Captions input and output line | number |
+| AFD insert, AFD output line | select, number |
+
+### Status and diagnostics
+
+| Entity | Type |
+| --- | --- |
+| Connection | binary sensor, stays available while the unit is off |
+| Input signal, Genlock locked, Timecode, Closed captions | binary sensor |
+| Still frame, Optical module | binary sensor |
+| Input format, Input pixel format | sensor |
+| Model, Software version, FPGA version, Protocol version, Friendly name, IP address | sensor |
+| Preset | select |
+
+## Saving presets
+
+Recalling a preset is a normal select. Saving is the action
+`blackmagic_teranex.save_preset`, deliberately not a button: it overwrites
+every setting in that preset slot and cannot be undone.
+
 ```yaml
-type: media-control
-entity: media_player.hyperdeck
+action: blackmagic_teranex.save_preset
+target:
+  entity_id: select.teranex_2d_preset
+data:
+  preset: 3
 ```
 
-### Tile with a progress-bar feel
-The `sensor.hyperdeck_clip_progress` sensor (0–100 %) works well with a gauge or a custom bar card:
+Targeting the whole device also works; only the Preset entity acts on it.
+
+The device never reports which preset is active, so the Preset entity shows
+the last preset recalled from Home Assistant and goes back to unknown when
+anyone recalls one from the front panel.
+
+## Test tone
+
+Not implemented. The protocol documents the test tone for the Teranex AV only.
+A 2D reports the field and accepts the command, but ignores it and reports
+`None` straight back, so an entity for it would only ever look broken.
+
+## Audio routing
+
+Output channel 1 is `AudioOut0` in the protocol, so the entity named *Audio
+output 1* writes `AudioOut0`. Sources are the 16 embedded inputs, the 8 Dolby
+decoded channels, and the built-in test tones. Only the first two output
+channels are enabled by default; enable the rest from the device page.
+
+Input level is shown in decibels. The device stores it in tenths of a decibel,
+which the integration converts in both directions.
+
+## Output formats
+
+The Teranex cannot list the formats it supports, so the integration ships a
+default set for the 2D. Trim it to what you actually use through the
+integration options, writing each format exactly as the device reports it
+(`1080p24`, not `1080p23.98`). The format currently active on the device is
+always offered, whatever the list says.
+
+If the device answers a setting with NACK, Home Assistant shows an error and
+the entity does not move. That usually means your model spells the value
+differently; turn on debug logging to see what it actually sends.
+
+## Power state
+
+The Teranex has no power on, standby or Wake-on-LAN command, so there is no
+power entity. Use the **Connection** sensor to see whether the unit is up; see
+[When the unit is switched off](#when-the-unit-is-switched-off).
+
+`Panel lock` and `Remote lock` can be written over the protocol but are never
+reported back by the device, so they are not exposed as entities.
+
+## Notes on field names
+
+Field names are read exactly as the device reports them, which is not always
+what the manual documents. On the tested unit the key is `Output sdi mode`
+(lower case) and the SDI input reports as `SDI1`. Keys that a model does not
+support are simply absent, and the integration treats absent as unknown rather
+than failing.
+
+## Troubleshooting
+
+Add this to `configuration.yaml` to see the protocol traffic:
+
 ```yaml
-type: gauge
-entity: sensor.hyperdeck_clip_progress
-min: 0
-max: 100
-needle: false
+logger:
+  logs:
+    custom_components.blackmagic_teranex: debug
 ```
 
-Or with [custom:bar-card](https://github.com/custom-cards/bar-card) via HACS for a real filling bar:
-```yaml
-type: custom:bar-card
-entity: sensor.hyperdeck_clip_progress
-max: 100
-```
+A switched-off processor is a normal condition in a rack, so it logs one info
+line when it goes offline and one when it comes back. The individual reconnect
+attempts in between only show at debug level.
 
-### Transport buttons
-```yaml
-type: horizontal-stack
-cards:
-  - type: button
-    entity: button.hyperdeck_previous_clip
-  - type: button
-    entity: button.hyperdeck_play
-  - type: button
-    entity: button.hyperdeck_stop
-  - type: button
-    entity: button.hyperdeck_record
-  - type: button
-    entity: button.hyperdeck_next_clip
-```
+## Brand images
 
-## How the progress bar works
-The integration passes `media_position`, `media_duration`, and `media_position_updated_at` to Home Assistant; the frontend calculates the bar itself in real time. Position within the current clip depends on the device's own `configuration: timecode output` setting (`clip` or `timeline`) — the two use a different reference point for the timecode the protocol returns. The integration **reads** that setting on connect (and keeps it current via the matching push notification) so it always interprets the timecode correctly, but it **never changes** it itself: that setting also affects what shows on the device's own front-panel display, and that's not something that should change on you mid-use without asking.
+The integration ships its own icon in `custom_components/blackmagic_teranex/brand/`,
+which Home Assistant 2026.3 and later picks up automatically. It is an original,
+generic design — a 4:3 picture becoming a 16:9 picture — and not the
+Blackmagic Design logo. Replace `icon.png` (256x256) and `icon@2x.png`
+(512x512) with your own artwork if you prefer, then restart Home Assistant.
 
-## Notes
-- **Loop / Loop single clip**: the protocol has no standalone command to set these two flags — they're parameters of the `play` command itself. The switches therefore send a `play` command with the current speed passed through unchanged, so flipping a switch while the deck is stopped doesn't accidentally start playback. This is a genuine protocol limitation, not a bug.
-- **Next/previous/select** clip now go straight through `goto: clip id`, natively supported by the protocol — no more seek-based workaround like the REST version needed.
-- The timecode sensor is deliberately **not** subscribed via a push notification (it could arrive every frame); it updates via the light poll (every 2 s) instead.
-- Record starts recording on the active media. Be careful with the record button on shared dashboards.
-- When the deck is unreachable (powered off, unplugged, network down), the media player shows **Off** rather than the grey "Unavailable" badge - a HyperDeck being off is an expected, normal state, not an integration error. It keeps showing the last known clip/timecode while off. Buttons, switches, and sensors still show as unavailable, since there's nothing to press or display for those while disconnected.
-- Works fine with no media inserted: on at least one real deck, the "no disk" condition ("105 no disk") can be returned by more than one status query during setup, depending on firmware/state - not just "clips get". Every query used during setup and polling tolerates this and falls back to an empty/default value rather than failing.
-- Pressing a control (play, record, seek, ...) that the deck rejects outright - most commonly "105 no disk" with no media inserted - is logged at debug level only, not as an error. This is an expected, everyday occurrence for hardware like this, not a bug worth an ERROR-level traceback per press.
-- **Seeking (dragging the progress bar)**: uses `goto: timecode: HH:MM:SS:FF` (absolute timeline position) rather than `goto: clip: {frame}` (clip-relative). On a real older HyperDeck (Studio Pro, protocol 1.8), the latter was rejected as "invalid value" in both a plain-integer and a timecode-string form, while `goto: clip: start` (the keyword form) worked fine - pointing at that specific sub-command rather than the value's shape. Confirmed working on real hardware with the `goto: timecode:` approach.
-- **Next clip** on a single-clip timeline: the deck clamps `goto: clip id: +1` to the current clip when there's nothing beyond it (per the protocol spec), so pressing "next" with only one clip on the timeline is a no-op rather than an error - expected behavior, not a bug.
-- The connection is a single persistent TCP session per HyperDeck; on connection loss, the integration retries every 10 seconds.
+## Removal
+
+Settings → Devices & services → *Blackmagic Teranex* → three-dot menu on
+the entry → **Delete**. To remove the code as well, uninstall the repository
+in HACS and restart Home Assistant. Nothing is changed on the Teranex itself.
+
+## Quality scale
+
+Aligned with the Home Assistant quality scale: Bronze. Home Assistant only
+grades core integrations, so this is a self-assessment, recorded rule by rule
+in [`quality_scale.yaml`](custom_components/blackmagic_teranex/quality_scale.yaml).
+
+One Bronze rule is deliberately exempt: *test-before-setup*. That rule wants
+setup to fail when the device cannot be reached, which would turn every
+switched-off Teranex into a "Failed to set up" error. The connection is tested
+in the config flow and in reconfigure instead.
+
+The test suite covers the config flow, reconfigure, the options flow, setup
+with the unit on and off, the save_preset action, and the protocol parser.
+
+## Security
+
+The protocol has no authentication or encryption. See [SECURITY.md](SECURITY.md).
 
 ## License
-Released under the [MIT License](LICENSE). Copyright (c) 2026 Videobarista.
-Blackmagic Design, HyperDeck and Blackmagic HyperDeck are trademarks of Blackmagic
-Design Pty Ltd. This project is an independent community integration and is
-not affiliated with or endorsed by Blackmagic Design.
+
+MIT — see [LICENSE](LICENSE).
