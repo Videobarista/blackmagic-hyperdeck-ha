@@ -1,3 +1,7 @@
+USE RELEASE 1.1.0!
+There are a few errors on the new 1.2.0 workin on it...
+
+
 # Blackmagic Teranex for Home Assistant
 
 [![Ruff](https://github.com/Videobarista/blackmagic-teranex-ha/actions/workflows/ruff.yml/badge.svg?branch=main)](https://github.com/Videobarista/blackmagic-teranex-ha/actions/workflows/ruff.yml)
