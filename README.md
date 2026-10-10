@@ -1,5 +1,5 @@
 USE RELEASE 1.1.0!
-There are a few errors on the new 1.2.0 workin on it...
+There are a few Test errors on the new 1.2.0 workin on it...
 
 
 # Blackmagic Teranex for Home Assistant
