@@ -92,6 +92,7 @@ The integration passes `media_position`, `media_duration`, and `media_position_u
 
 ## License
 Released under the [MIT License](LICENSE). Copyright (c) 2026 Videobarista.
+
 Blackmagic Design, HyperDeck and Blackmagic HyperDeck are trademarks of Blackmagic
 Design Pty Ltd. This project is an independent community integration and is
 not affiliated with or endorsed by Blackmagic Design.
