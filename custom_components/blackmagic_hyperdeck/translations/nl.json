@@ -6,6 +6,10 @@
         "data": {
           "host": "Host (IP-adres)",
           "port": "Poort"
+        },
+        "data_description": {
+          "host": "IP-adres of hostnaam van de HyperDeck in je netwerk.",
+          "port": "Poort van het HyperDeck Ethernet-protocol. Laat op 9993 staan, tenzij je zeker weet dat die anders is."
         }
       }
     },
@@ -19,22 +23,46 @@
   },
   "entity": {
     "button": {
-      "play": { "name": "Afspelen" },
-      "stop": { "name": "Stop" },
-      "record": { "name": "Opnemen" },
-      "next_clip": { "name": "Volgende clip" },
-      "previous_clip": { "name": "Vorige clip" },
-      "restart_clip": { "name": "Clip opnieuw" }
+      "play": {
+        "name": "Afspelen"
+      },
+      "stop": {
+        "name": "Stop"
+      },
+      "record": {
+        "name": "Opnemen"
+      },
+      "next_clip": {
+        "name": "Volgende clip"
+      },
+      "previous_clip": {
+        "name": "Vorige clip"
+      },
+      "restart_clip": {
+        "name": "Clip opnieuw"
+      }
     },
     "sensor": {
-      "timecode": { "name": "Tijdcode" },
-      "current_clip": { "name": "Huidige clip" },
-      "transport_mode": { "name": "Transportmodus" },
-      "clip_progress": { "name": "Clipvoortgang" }
+      "timecode": {
+        "name": "Tijdcode"
+      },
+      "current_clip": {
+        "name": "Huidige clip"
+      },
+      "transport_mode": {
+        "name": "Transportmodus"
+      },
+      "clip_progress": {
+        "name": "Clipvoortgang"
+      }
     },
     "switch": {
-      "loop": { "name": "Loop tijdlijn" },
-      "single_clip": { "name": "Loop enkele clip" }
+      "loop": {
+        "name": "Loop tijdlijn"
+      },
+      "single_clip": {
+        "name": "Loop enkele clip"
+      }
     }
   }
 }

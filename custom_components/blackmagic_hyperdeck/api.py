@@ -21,10 +21,11 @@ by a blank line.
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Callable
+from dataclasses import dataclass, field
 import logging
 import re
-from dataclasses import dataclass, field
-from typing import Any, Callable
+from typing import Any
 
 from .const import COMMAND_TIMEOUT, CONNECT_TIMEOUT, DEFAULT_FPS
 
@@ -263,7 +264,7 @@ class HyperDeckClient:
             self._reader, self._writer = await asyncio.wait_for(
                 asyncio.open_connection(self.host, self.port), timeout=timeout
             )
-        except (OSError, asyncio.TimeoutError) as err:
+        except (TimeoutError, OSError) as err:
             raise HyperDeckConnectionError(
                 f"Cannot reach HyperDeck at {self.host}:{self.port}: {err}"
             ) from err
@@ -272,7 +273,7 @@ class HyperDeckClient:
         # directly rather than through send_command (nothing was sent).
         try:
             banner = await asyncio.wait_for(self._read_block(), timeout=timeout)
-        except (OSError, asyncio.TimeoutError, HyperDeckConnectionError) as err:
+        except (TimeoutError, OSError, HyperDeckConnectionError) as err:
             await self._close()
             raise HyperDeckConnectionError(
                 f"HyperDeck at {self.host}:{self.port} did not answer: {err}"
@@ -394,7 +395,7 @@ class HyperDeckClient:
 
             try:
                 return await asyncio.wait_for(self._pending, timeout=timeout)
-            except asyncio.TimeoutError as err:
+            except TimeoutError as err:
                 self._pending = None
                 raise HyperDeckConnectionError(
                     f"No response to {command.split(':')[0]!r} within {timeout}s"

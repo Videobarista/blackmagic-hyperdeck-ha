@@ -6,6 +6,10 @@
         "data": {
           "host": "Host (IP address)",
           "port": "Port"
+        },
+        "data_description": {
+          "host": "IP address or hostname of the HyperDeck on your network.",
+          "port": "HyperDeck Ethernet Protocol port. Leave at 9993 unless you know it differs."
         }
       }
     },
@@ -19,22 +23,46 @@
   },
   "entity": {
     "button": {
-      "play": { "name": "Play" },
-      "stop": { "name": "Stop" },
-      "record": { "name": "Record" },
-      "next_clip": { "name": "Next clip" },
-      "previous_clip": { "name": "Previous clip" },
-      "restart_clip": { "name": "Restart clip" }
+      "play": {
+        "name": "Play"
+      },
+      "stop": {
+        "name": "Stop"
+      },
+      "record": {
+        "name": "Record"
+      },
+      "next_clip": {
+        "name": "Next clip"
+      },
+      "previous_clip": {
+        "name": "Previous clip"
+      },
+      "restart_clip": {
+        "name": "Restart clip"
+      }
     },
     "sensor": {
-      "timecode": { "name": "Timecode" },
-      "current_clip": { "name": "Current clip" },
-      "transport_mode": { "name": "Transport mode" },
-      "clip_progress": { "name": "Clip progress" }
+      "timecode": {
+        "name": "Timecode"
+      },
+      "current_clip": {
+        "name": "Current clip"
+      },
+      "transport_mode": {
+        "name": "Transport mode"
+      },
+      "clip_progress": {
+        "name": "Clip progress"
+      }
     },
     "switch": {
-      "loop": { "name": "Loop timeline" },
-      "single_clip": { "name": "Loop single clip" }
+      "loop": {
+        "name": "Loop timeline"
+      },
+      "single_clip": {
+        "name": "Loop single clip"
+      }
     }
   }
 }

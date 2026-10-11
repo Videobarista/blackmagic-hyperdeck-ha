@@ -1,10 +1,10 @@
 """Base entity for the Blackmagic HyperDeck integration."""
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
 import functools
 import logging
-from collections.abc import Awaitable, Callable
-from typing import Any, TypeVar
+from typing import Any
 
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
@@ -14,10 +14,9 @@ from .const import DOMAIN, MANUFACTURER
 from .coordinator import HyperDeckCoordinator
 
 _LOGGER = logging.getLogger(__name__)
-_F = TypeVar("_F", bound=Callable[..., Awaitable[Any]])
 
 
-def suppress_command_errors(func: _F) -> _F:
+def suppress_command_errors[F: Callable[..., Awaitable[Any]]](func: F) -> F:
     """Quietly absorb HyperDeckError from an entity action method.
 
     The deck rejecting a command outright (e.g. "105 no disk" when

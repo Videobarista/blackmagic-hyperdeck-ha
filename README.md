@@ -1,28 +1,31 @@
 # Blackmagic HyperDeck for Home Assistant
 
-[![CodeQL](https://github.com/Videobarista/blackmagic-hyperdeck-ha/actions/workflows/codeql.yml/badge.svg)](https://github.com/Videobarista/blackmagic-hyperdeck-ha/actions/workflows/codeql.yml)
-[![Hassfest](https://github.com/Videobarista/blackmagic-hyperdeck-ha/actions/workflows/hassfest.yml/badge.svg)](https://github.com/Videobarista/blackmagic-hyperdeck-ha/actions/workflows/hassfest.yml)
-[![HACS Validation](https://github.com/Videobarista/blackmagic-hyperdeck-ha/actions/workflows/hacs.yml/badge.svg)](https://github.com/Videobarista/blackmagic-hyperdeck-ha/actions/workflows/hacs.yml)
-[![HACS Custom](https://img.shields.io/badge/HACS-Custom-orange.svg)](https://github.com/hacs/integration)
+[![Ruff](https://github.com/Videobarista/blackmagic-hyperdeck-ha/actions/workflows/ruff.yml/badge.svg?branch=main)](https://github.com/Videobarista/blackmagic-hyperdeck-ha/actions/workflows/ruff.yml)
+[![Hassfest](https://github.com/Videobarista/blackmagic-hyperdeck-ha/actions/workflows/hassfest.yml/badge.svg?branch=main)](https://github.com/Videobarista/blackmagic-hyperdeck-ha/actions/workflows/hassfest.yml)
+[![HACS](https://github.com/Videobarista/blackmagic-hyperdeck-ha/actions/workflows/hacs.yml/badge.svg?branch=main)](https://github.com/Videobarista/blackmagic-hyperdeck-ha/actions/workflows/hacs.yml)
+[![CodeQL](https://github.com/Videobarista/blackmagic-hyperdeck-ha/actions/workflows/codeql.yml/badge.svg?branch=main)](https://github.com/Videobarista/blackmagic-hyperdeck-ha/actions/workflows/codeql.yml)
+[![HACS Custom](https://img.shields.io/badge/HACS-Custom-orange.svg)](https://hacs.xyz/docs/faq/custom_repositories/)
 [![GitHub release](https://img.shields.io/github/v/release/Videobarista/blackmagic-hyperdeck-ha)](https://github.com/Videobarista/blackmagic-hyperdeck-ha/releases)
-[![License](https://img.shields.io/github/license/Videobarista/blackmagic-hyperdeck-ha)](LICENSE)
+[![License: MIT](https://img.shields.io/github/license/Videobarista/blackmagic-hyperdeck-ha)](LICENSE)
+
+[![Open your Home Assistant instance and open this repository inside HACS.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=Videobarista&repository=blackmagic-hyperdeck-ha&category=integration)
 
 Custom integration (HACS) for Blackmagic HyperDeck disk recorders (Studio, Extreme, Shuttle, and older models) via the **HyperDeck Ethernet Protocol** (TCP port 9993).
-
-> **v0.2.0**: this integration used Blackmagic's new REST API (December 2024, port 80) in v0.1.0. That's only present on recent firmware for the current Extreme/Shuttle/Studio line. The Ethernet Protocol on port 9993 has shipped on virtually every networked HyperDeck since ~2013 — old and new alike — and was never replaced by REST, only supplemented by it. Hence the switch: broader compatibility for anyone installing this integration via HACS.
 
 ## Features
 - **Media player** entity with play / pause / stop / next / previous / seek, clip name, and a live progress bar.
 - **Buttons**: Play, Stop, Record, Next clip, Previous clip, Restart clip — for custom dashboard layouts.
 - **Sensors**: Timecode, Current clip, Transport mode, Clip progress (%).
 - **Switches**: Loop timeline, Loop single clip.
-- **Real-time updates** via the protocol's own asynchronous notifications (`notify: transport/slot/configuration/clips/disk`), with a light poll (every 2 s) as a supplement for the timecode — the HyperDeck deliberately isn't asked to push that as its own notification (that would send a message on every single frame and clog the connection).
+- **Real-time updates** via the protocol's own asynchronous notifications (`notify: transport/slot/configuration`), with a light poll (every 2 s) as a supplement for the timecode — the HyperDeck deliberately isn't asked to push that as its own notification (that would send a message on every single frame and clog the connection).
 
 ## Requirements
 - HyperDeck with an ethernet connection and network access (port 9993 reachable from Home Assistant).
 - Home Assistant 2024.6 or newer.
 
 ## Installation (HACS)
+Click the **Open in HACS** button above, or add it by hand:
+
 1. HACS → three dots top right → *Custom repositories*.
 2. Add this repository's URL, category **Integration**.
 3. Install *Blackmagic HyperDeck* and restart Home Assistant.
@@ -75,8 +78,9 @@ cards:
 The integration passes `media_position`, `media_duration`, and `media_position_updated_at` to Home Assistant; the frontend calculates the bar itself in real time. Position within the current clip depends on the device's own `configuration: timecode output` setting (`clip` or `timeline`) — the two use a different reference point for the timecode the protocol returns. The integration **reads** that setting on connect (and keeps it current via the matching push notification) so it always interprets the timecode correctly, but it **never changes** it itself: that setting also affects what shows on the device's own front-panel display, and that's not something that should change on you mid-use without asking.
 
 ## Notes
+- **Why the Ethernet Protocol and not the REST API**: Blackmagic's newer REST API (port 80) only exists on recent firmware for the current Extreme/Shuttle/Studio line. The classic HyperDeck Ethernet Protocol on port 9993 has shipped on virtually every networked HyperDeck since around 2013, old and new alike, and was never replaced by REST, only supplemented by it. Using it keeps this integration working on older decks too. It is also deliberately limited to commands that older firmware understands (tested on a HyperDeck Studio Pro reporting protocol version 1.8).
 - **Loop / Loop single clip**: the protocol has no standalone command to set these two flags — they're parameters of the `play` command itself. The switches therefore send a `play` command with the current speed passed through unchanged, so flipping a switch while the deck is stopped doesn't accidentally start playback. This is a genuine protocol limitation, not a bug.
-- **Next/previous/select** clip now go straight through `goto: clip id`, natively supported by the protocol — no more seek-based workaround like the REST version needed.
+- **Next/previous/select** clip go straight through `goto: clip id`, natively supported by the protocol.
 - The timecode sensor is deliberately **not** subscribed via a push notification (it could arrive every frame); it updates via the light poll (every 2 s) instead.
 - Record starts recording on the active media. Be careful with the record button on shared dashboards.
 - When the deck is unreachable (powered off, unplugged, network down), the media player shows **Off** rather than the grey "Unavailable" badge - a HyperDeck being off is an expected, normal state, not an integration error. It keeps showing the last known clip/timecode while off. Buttons, switches, and sensors still show as unavailable, since there's nothing to press or display for those while disconnected.

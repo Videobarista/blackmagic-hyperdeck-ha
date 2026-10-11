@@ -39,7 +39,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: HyperDeckConfigEntry) ->
         # the same as being unreachable) - worth its own message so this
         # doesn't read like a network problem when it isn't one.
         raise ConfigEntryNotReady(
-            f"HyperDeck at {coordinator.client.host}:{coordinator.client.port} rejected a setup command: {err}"
+            f"HyperDeck at {coordinator.client.host}:{coordinator.client.port} "
+            f"rejected a setup command: {err}"
         ) from err
     except HyperDeckError as err:
         raise ConfigEntryNotReady(str(err)) from err
