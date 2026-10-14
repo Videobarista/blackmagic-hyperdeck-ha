@@ -63,6 +63,7 @@ class HyperDeckCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self.position_updated_at = dt_util.utcnow()
         self._run_task: asyncio.Task | None = None
         self._poll_count = 0
+        self._unavailable_logged = False
 
     # ------------------------------------------------------------- start
     def start(self) -> None:
@@ -78,33 +79,57 @@ class HyperDeckCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         await self.client.disconnect()
 
     async def async_setup(self) -> None:
-        """Connect and fetch once synchronously, then start the background loop.
+        """Try a first connect, then hand over to the background loop.
 
-        Deliberately not named/wired as `async_config_entry_first_refresh`
-        (the DataUpdateCoordinator base class method) since this doesn't
-        go through `_async_update_data` - raises the api.py exceptions
-        directly so `__init__.py` can turn them into `ConfigEntryNotReady`.
+        Never raises for an unreachable deck. A HyperDeck that is powered
+        off while Home Assistant starts is a normal situation, not a setup
+        failure: setup always succeeds, the media player reports off and
+        the other entities report unavailable, and the background loop
+        keeps retrying every RECONNECT_DELAY seconds until the deck is
+        reachable. The connection itself is verified once, in the config
+        flow, when the deck is first added.
+
+        Deliberately not wired as `async_config_entry_first_refresh` (the
+        DataUpdateCoordinator base class method), since state never goes
+        through `_async_update_data` in this push-based coordinator.
         """
-        await self._connect_and_sync()
+        try:
+            await self._connect_and_sync()
+        except HyperDeckError as err:
+            self._mark_unavailable(err)
         self.start()
+
+    def _mark_unavailable(self, err: Exception | None) -> None:
+        """Flag the deck as unreachable, logging that only once per outage."""
+        if not self._unavailable_logged:
+            _LOGGER.info("HyperDeck %s is unavailable: %s", self.client.host, err)
+            self._unavailable_logged = True
+        else:
+            _LOGGER.debug("HyperDeck %s still unavailable: %s", self.client.host, err)
+        self.last_update_success = False
+        self.async_update_listeners()
+
+    def _mark_available(self) -> None:
+        """Log once when the deck comes back after an outage."""
+        if self._unavailable_logged:
+            _LOGGER.info("HyperDeck %s is back online", self.client.host)
+            self._unavailable_logged = False
 
     # --------------------------------------------------------- main loop
     async def _run(self) -> None:
-        first = True
         while True:
             try:
-                if not first:
+                if not self.client.connected:
                     await self._connect_and_sync()
-                first = False
                 await self._poll_loop()
             except asyncio.CancelledError:
                 raise
             except HyperDeckConnectionError as err:
-                _LOGGER.debug("HyperDeck connection lost/unavailable: %s", err)
+                self._mark_unavailable(err)
             except Exception:  # noqa: BLE001 - keep the loop alive regardless
                 _LOGGER.exception("Unexpected error in HyperDeck connection loop")
-            self.last_update_success = False
-            self.async_update_listeners()
+                self.last_update_success = False
+                self.async_update_listeners()
             await self.client.disconnect()
             await asyncio.sleep(RECONNECT_DELAY)
 
@@ -200,6 +225,7 @@ class HyperDeckCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         )
         self.position_updated_at = dt_util.utcnow()
         self._poll_count = 0
+        self._mark_available()
 
     async def async_refresh_transport(self) -> None:
         """Re-fetch transport info right away after we issue a command.
@@ -267,8 +293,7 @@ class HyperDeckCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
     def _on_disconnected(self, err: Exception | None) -> None:
         _LOGGER.debug("HyperDeck %s disconnected: %s", self.client.host, err)
-        self.last_update_success = False
-        self.async_update_listeners()
+        self._mark_unavailable(err)
 
     # ------------------------------------------------------------- helpers
     @property

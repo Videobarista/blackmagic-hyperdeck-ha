@@ -1,0 +1,37 @@
+rules:
+  # Bronze
+  action-setup:
+    status: exempt
+    comment: The integration does not register custom service actions.
+  appropriate-polling:
+    status: done
+    comment: >-
+      State is pushed by the deck (notify). A light 2 s poll only refreshes the
+      timecode, which the deck would otherwise push on every frame.
+  brands: done
+  common-modules: done
+  config-flow-test-coverage: done
+  config-flow: done
+  dependency-transparency: done
+  docs-actions:
+    status: exempt
+    comment: The integration does not register custom service actions.
+  docs-high-level-description: done
+  docs-installation-instructions: done
+  docs-removal-instructions: done
+  entity-event-setup:
+    status: done
+    comment: Entities subscribe through CoordinatorEntity in async_added_to_hass.
+  entity-unique-id: done
+  has-entity-name: done
+  runtime-data: done
+  test-before-configure: done
+  test-before-setup:
+    status: exempt
+    comment: >-
+      Deliberate deviation. A HyperDeck that is switched off while Home Assistant
+      starts is a normal situation, so setup does not fail: the media player
+      shows off, the other entities are unavailable, and the coordinator keeps
+      reconnecting in the background. The connection is verified in the config
+      flow (test-before-configure).
+  unique-config-entry: done
