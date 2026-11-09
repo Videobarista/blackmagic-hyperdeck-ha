@@ -9,7 +9,7 @@ from typing import Any
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .api import HyperDeckError
+from .api import HyperDeckError, sanitize_label
 from .const import DOMAIN, MANUFACTURER
 from .coordinator import HyperDeckCoordinator
 
@@ -53,6 +53,6 @@ class HyperDeckEntity(CoordinatorEntity[HyperDeckCoordinator]):
             identifiers={(DOMAIN, entry.entry_id)},
             name=entry.title,
             manufacturer=MANUFACTURER,
-            model=device.get("model") or "HyperDeck",
-            sw_version=device.get("software version"),
+            model=sanitize_label(device.get("model")) or "HyperDeck",
+            sw_version=sanitize_label(device.get("software version")) or None,
         )

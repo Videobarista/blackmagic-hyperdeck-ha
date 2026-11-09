@@ -36,6 +36,17 @@ _TRAILING_TIMECODES_RE = re.compile(
     r"\s+(\d{2}:\d{2}:\d{2}:\d{2})\s+(\d{2}:\d{2}:\d{2}:\d{2})\s*$"
 )
 _RATE_RE = re.compile(r"([pi])(\d+(?:\.\d+)?)$")
+_CONTROL_CHARS_RE = re.compile(r"[\x00-\x1f\x7f]")
+
+# Upper bound on the number of lines in one multi-line block from the deck.
+# Real blocks are small (a clip list of a few hundred entries at most); the
+# cap only stops a misbehaving device from growing memory without limit.
+MAX_BLOCK_LINES = 10_000
+
+# Keys whose values are redacted from debug logs (hardware identifiers and
+# user-chosen disk names). Clip names are deliberately left visible: they
+# are needed to debug playback.
+_REDACTED_KEYS = frozenset({"device serial", "serial", "unique id", "volume name"})
 
 # Every non-drop frame rate documented across HyperDeck's video-format
 # names, keyed by the digits Blackmagic uses after "p"/"i" - with or
@@ -94,6 +105,10 @@ class HyperDeckConnectionError(HyperDeckError):
     """Could not reach the HyperDeck, or the connection dropped."""
 
 
+class HyperDeckInvalidCommandError(HyperDeckError):
+    """A command was refused locally before sending (unsafe characters)."""
+
+
 class HyperDeckCommandError(HyperDeckError):
     """The deck understood us but rejected the command (100-199 response)."""
 
@@ -124,6 +139,26 @@ def _bool(value: str | None) -> bool | None:
     if value is None:
         return None
     return value.strip().strip('"').lower() == "true"
+
+
+def sanitize_label(value: str | None, max_len: int = 64) -> str:
+    """Make a device-supplied string safe to use as a title or model name.
+
+    Strips control characters and surrounding whitespace and caps the length,
+    so a misbehaving device cannot inject odd characters or huge strings into
+    Home Assistant's UI. Returns an empty string for None.
+    """
+    if not value:
+        return ""
+    return _CONTROL_CHARS_RE.sub("", value).strip()[:max_len]
+
+
+def redact(params: dict[str, str]) -> dict[str, str]:
+    """Copy of `params` with identifying values replaced, for debug logs."""
+    return {
+        key: ("***" if key.lower() in _REDACTED_KEYS and value else value)
+        for key, value in params.items()
+    }
 
 
 def _build_command(name: str, params: dict[str, Any] | None = None) -> str:
@@ -280,7 +315,9 @@ class HyperDeckClient:
             ) from err
 
         self._connected.set()
-        _LOGGER.debug("HyperDeck <- %s %s %s (banner)", banner.code, banner.text, banner.params)
+        _LOGGER.debug(
+            "HyperDeck <- %s %s %s (banner)", banner.code, banner.text, redact(banner.params)
+        )
         self._reader_task = asyncio.get_event_loop().create_task(self._reader_loop())
         return banner
 
@@ -309,7 +346,12 @@ class HyperDeckClient:
     async def _readline(self) -> str:
         if self._reader is None:
             raise HyperDeckConnectionError("Not connected to HyperDeck")
-        raw = await self._reader.readline()
+        try:
+            raw = await self._reader.readline()
+        except (ValueError, asyncio.LimitOverrunError) as err:
+            # A line longer than the stream limit (64 KiB): never valid for
+            # this protocol, so treat it like a broken connection.
+            raise HyperDeckConnectionError("Line from HyperDeck too long") from err
         if not raw:
             _LOGGER.debug("HyperDeck %s:%s closed the connection", self.host, self.port)
             raise HyperDeckConnectionError("Connection closed by HyperDeck")
@@ -321,15 +363,21 @@ class HyperDeckClient:
         try:
             code = int(code_str)
         except ValueError as err:
-            raise HyperDeckConnectionError(f"Malformed response: {first!r}") from err
+            raise HyperDeckConnectionError(f"Malformed response: {first[:80]!r}") from err
 
         params: dict[str, str] = {}
         if rest.endswith(":"):
             text = rest[:-1]
+            line_count = 0
             while True:
                 line = await self._readline()
                 if not line:
                     break
+                line_count += 1
+                if line_count > MAX_BLOCK_LINES:
+                    raise HyperDeckConnectionError(
+                        f"Response from HyperDeck exceeds {MAX_BLOCK_LINES} lines"
+                    )
                 key, sep, value = line.partition(":")
                 if sep:
                     params[key.strip()] = value.strip()
@@ -346,7 +394,9 @@ class HyperDeckClient:
         try:
             while True:
                 block = await self._read_block()
-                _LOGGER.debug("HyperDeck <- %s %s %s", block.code, block.text, block.params)
+                _LOGGER.debug(
+                    "HyperDeck <- %s %s %s", block.code, block.text, redact(block.params)
+                )
                 if block.is_async:
                     if self._on_notification is not None:
                         try:
@@ -363,7 +413,12 @@ class HyperDeckClient:
                         self._pending.set_result(block)
                     self._pending = None
                 else:
-                    _LOGGER.debug("Unmatched HyperDeck response: %s", block)
+                    _LOGGER.debug(
+                        "Unmatched HyperDeck response: %s %s %s",
+                        block.code,
+                        block.text,
+                        redact(block.params),
+                    )
         except asyncio.CancelledError:
             raise
         except Exception as err:  # noqa: BLE001
@@ -379,6 +434,12 @@ class HyperDeckClient:
     async def send_command(
         self, command: str, timeout: float = COMMAND_TIMEOUT
     ) -> HyperDeckResponse:
+        # Injection guard: the protocol is line based, so a CR/LF (or any
+        # other control character) inside a value would start a second,
+        # unintended command. No valid command contains one, so refuse it.
+        if _CONTROL_CHARS_RE.search(command):
+            _LOGGER.warning("Refused to send a HyperDeck command containing control characters")
+            raise HyperDeckInvalidCommandError("Command contains control characters")
         if not self.connected or self._writer is None:
             raise HyperDeckConnectionError("Not connected to HyperDeck")
 

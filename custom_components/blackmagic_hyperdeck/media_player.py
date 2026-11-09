@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 from datetime import datetime
+import logging
+import math
 from typing import Any
 
 from homeassistant.components.media_player import (
@@ -17,6 +19,8 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from . import HyperDeckConfigEntry
 from .coordinator import HyperDeckCoordinator
 from .entity import HyperDeckEntity, suppress_command_errors
+
+_LOGGER = logging.getLogger(__name__)
 
 # Deck transport "status" values that represent some form of active
 # playback (as opposed to fully stopped/idle or recording).
@@ -189,6 +193,15 @@ class HyperDeckMediaPlayer(HyperDeckEntity, MediaPlayerEntity):
     @suppress_command_errors
     async def async_media_seek(self, position: float) -> None:
         c = self.coordinator
+        if not math.isfinite(position):
+            _LOGGER.debug("Ignoring seek to non-finite position %s", position)
+            return
+        # Keep the target inside the current clip, so an out-of-range value
+        # (e.g. from an automation) cannot produce an absurd timecode.
+        position = max(position, 0.0)
+        duration = self.media_duration
+        if duration is not None:
+            position = min(position, float(duration))
         frame = round(position * c.fps)
         target = c.seek_target_timecode(frame)
         await c.client.goto_timecode(target)

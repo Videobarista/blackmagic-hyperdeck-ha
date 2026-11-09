@@ -78,6 +78,7 @@ def _coordinator_client(*, reachable: bool) -> MagicMock:
         )
     client.disconnect = AsyncMock()
     client.enable_notifications = AsyncMock()
+    client.goto_timecode = AsyncMock()
     client.get_transport_info = AsyncMock(
         return_value={
             "status": "play",

@@ -14,6 +14,7 @@
       }
     },
     "error": {
+      "invalid_host": "Vul een geldig IP-adres of een geldige hostnaam in.",
       "cannot_connect": "Kan geen verbinding maken met de HyperDeck. Controleer het IP-adres en of poort 9993 (Ethernet-protocol) bereikbaar is.",
       "unknown": "Onverwachte fout"
     },

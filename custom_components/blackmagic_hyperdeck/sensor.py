@@ -30,7 +30,9 @@ def _timecode(c: HyperDeckCoordinator) -> str | None:
 
 def _clip_name(c: HyperDeckCoordinator) -> str | None:
     clip = c.current_clip
-    return clip.get("name") if clip else None
+    name = clip.get("name") if clip else None
+    # Home Assistant rejects sensor states over 255 characters.
+    return name[:255] if name else None
 
 
 SENSORS: tuple[HyperDeckSensorDescription, ...] = (

@@ -14,6 +14,7 @@
       }
     },
     "error": {
+      "invalid_host": "Enter a valid IP address or hostname.",
       "cannot_connect": "Cannot connect to the HyperDeck. Check the IP address and make sure port 9993 (Ethernet Protocol) is reachable.",
       "unknown": "Unexpected error"
     },

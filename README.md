@@ -98,6 +98,19 @@ The integration passes `media_position`, `media_duration`, and `media_position_u
 - **Next clip** on a single-clip timeline: the deck clamps `goto: clip id: +1` to the current clip when there's nothing beyond it (per the protocol spec), so pressing "next" with only one clip on the timeline is a no-op rather than an error - expected behavior, not a bug.
 - The connection is a single persistent TCP session per HyperDeck; on connection loss, the integration retries every 10 seconds.
 
+## Security
+The HyperDeck Ethernet Protocol has no password and no encryption: anyone on the same network can control the deck, with or without this integration. The integration adds its own safeguards on top:
+
+- **Outbound only**: it opens a single TCP connection to the deck on port 9993 and listens on no ports itself. No credentials are stored, and it has no external Python dependencies.
+- **Command injection guard**: any command containing a line break or other control character is refused before it is sent, so a value can never smuggle in a second command.
+- **Input validation**: the host must be a valid hostname or IP address, the port must be 1–65535, and seek positions are kept inside the current clip.
+- **Untrusted device data**: oversized or endless responses from the deck are treated as a broken connection (the integration reconnects) instead of growing memory, and device-supplied names are cleaned and length-capped.
+- **Log redaction**: debug logs replace the SSD serial number and volume name with `***`. Clip names stay visible, as they are needed for debugging.
+
+The real protection is the network. Put HyperDecks in their own VLAN, allow only Home Assistant (and the workstations that operate the decks) to reach TCP 9993, restrict FTP and web access to those workstations or switch FTP off when unused, and block connections from the decks to other networks and the internet.
+
+To report a vulnerability, see [SECURITY.md](SECURITY.md).
+
 ## Quality scale
 This integration is aligned with the Home Assistant quality scale: **Bronze**. Home Assistant only grades core integrations, so this is a self-assessment, not an official tier. See [`quality_scale.yaml`](custom_components/blackmagic_hyperdeck/quality_scale.yaml) for the rule-by-rule status.
 
