@@ -5,6 +5,8 @@
 [![Hassfest](https://github.com/Videobarista/blackmagic-hyperdeck-ha/actions/workflows/hassfest.yml/badge.svg?branch=main)](https://github.com/Videobarista/blackmagic-hyperdeck-ha/actions/workflows/hassfest.yml)
 [![HACS](https://github.com/Videobarista/blackmagic-hyperdeck-ha/actions/workflows/hacs.yml/badge.svg?branch=main)](https://github.com/Videobarista/blackmagic-hyperdeck-ha/actions/workflows/hacs.yml)
 [![CodeQL](https://github.com/Videobarista/blackmagic-hyperdeck-ha/actions/workflows/codeql.yml/badge.svg?branch=main)](https://github.com/Videobarista/blackmagic-hyperdeck-ha/actions/workflows/codeql.yml)
+[![Local only](https://github.com/Videobarista/blackmagic-hyperdeck-ha/actions/workflows/local-only.yml/badge.svg?branch=main)](https://github.com/Videobarista/blackmagic-hyperdeck-ha/actions/workflows/local-only.yml)
+[![IoT class](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fraw.githubusercontent.com%2FVideobarista%2Fblackmagic-hyperdeck-ha%2Fmain%2Fcustom_components%2Fblackmagic_hyperdeck%2Fmanifest.json&query=%24.iot_class&label=IoT%20class&color=41BDF5)](#local-only)
 [![Quality scale: Bronze aligned](https://img.shields.io/badge/quality%20scale-Bronze%20aligned-cd7f32)](#quality-scale)
 [![HACS Custom](https://img.shields.io/badge/HACS-Custom-orange.svg)](https://hacs.xyz/docs/faq/custom_repositories/)
 [![GitHub release](https://img.shields.io/github/v/release/Videobarista/blackmagic-hyperdeck-ha)](https://github.com/Videobarista/blackmagic-hyperdeck-ha/releases)
@@ -110,6 +112,16 @@ The HyperDeck Ethernet Protocol has no password and no encryption: anyone on the
 The real protection is the network. Put HyperDecks in their own VLAN, allow only Home Assistant (and the workstations that operate the decks) to reach TCP 9993, restrict FTP and web access to those workstations or switch FTP off when unused, and block connections from the decks to other networks and the internet.
 
 To report a vulnerability, see [SECURITY.md](SECURITY.md).
+
+## Local only
+The integration only talks to your HyperDeck, never to the internet or any other service. Two automated checks back the **Local only** badge:
+
+- `scripts/check_local_only.py` (the badge's workflow, standard library only) reads the manifest and the code: local IoT class, no cloud or webhook, no extra Python packages, no listeners or webhooks, no HTTP client at all, connections only from `api.py`, and no hard-coded internet addresses. Every address comes from your configuration.
+- The tests run the real protocol client against a fake deck and record every TCP connection during the config flow, setup, polling and commands, and check that all of them go to the host and port you entered. Real network access is blocked in the tests, so anything else would fail.
+
+The **IoT class** badge shows the class declared in the manifest (`local_push`: the deck pushes changes over the local network).
+
+This covers the integration itself; what Home Assistant does (for example its optional analytics) is up to your Home Assistant settings.
 
 ## Quality scale
 This integration is aligned with the Home Assistant quality scale: **Bronze**. Home Assistant only grades core integrations, so this is a self-assessment, not an official tier. See [`quality_scale.yaml`](custom_components/blackmagic_hyperdeck/quality_scale.yaml) for the rule-by-rule status.
